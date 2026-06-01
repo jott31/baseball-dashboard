@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Asia Baseball">
+<meta name="theme-color" content="#C8102E">
+<title>Asia Baseball Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --kbo: #C8102E;
+    --npb: #003087;
+    --both: #1a1a2e;
+    --active: #C8102E;
+    --bg: #f0ede8;
+    --card: #ffffff;
+    --text: #1a1a1a;
+    --muted: #888;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  html, body {
+    height: 100%;
+    overscroll-behavior: none;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    font-family: 'Barlow', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    max-width: 500px;
+    margin: 0 auto;
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+  }
+  /* ── HEADER ── */
+  #header {
+    background: var(--active);
+    padding: calc(var(--safe-top) + 0.9rem) 1rem 0;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.3);
+    transition: background 0.3s;
+  }
+  #header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+  }
+  #logo {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  #logo-flag { font-size: 1.6rem; line-height: 1; transition: all 0.3s; }
+  #logo-text { line-height: 1.1; }
+  #logo-title {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 1.35rem;
+    font-weight: 900;
+    color: #fff;
+    letter-spacing: 0.04em;
+  }
+  #logo-sub {
+    font-size: 0.6rem;
+    color: rgba(255,255,255,0.65);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  #refresh-btn {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #fff;
+    border-radius: 8px;
+    padding: 0.42rem 0.85rem;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s;
+  }
+  #refresh-btn:active { background: rgba(255,255,255,0.28); }
+  #refresh-icon { display: inline-block; transition: transform 0.3s; }
+  #refresh-icon.spinning { animation: spin 0.8s linear infinite; }
+  /* ── LEAGUE TABS ── */
+  #league-tabs {
+    display: flex;
+    gap: 0.35rem;
+  }
+  .league-tab {
+    flex: 1;
+    padding: 0.55rem 0.3rem;
+    background: rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.8);
+    border: none;
+    border-radius: 7px 7px 0 0;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: all 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .league-tab.active {
+    background: var(--bg);
+    color: var(--active);
+  }
+  /* ── SECTION TABS ── */
+  #section-tabs {
+    background: var(--card);
+    border-bottom: 2px solid #e8e4de;
+    padding: 0.5rem 0.6rem;
+    display: flex;
+    gap: 0.35rem;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  #section-tabs::-webkit-scrollbar { display: none; }
+  .section-tab {
+    flex-shrink: 0;
+    padding: 0.45rem 0.8rem;
+    background: transparent;
+    color: #777;
+    border: 1.5px solid #ddd;
+    border-radius: 20px;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .section-tab.active {
+    background: var(--active);
+    color: #fff;
+    border-color: var(--active);
+  }
+  /* ── CONTENT ── */
+  #content {
+    flex: 1;
+    padding: 0.9rem;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(var(--safe-bottom) + 1rem);
+  }
+  /* ── EMPTY STATE ── */
+  #empty-state {
+    text-align: center;
+    padding: 3.5rem 1rem;
+  }
+  #empty-ball {
+    font-size: 3.5rem;
+    margin-bottom: 1rem;
+    animation: float 3s ease-in-out infinite;
+  }
+  #empty-title {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 1.15rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: #555;
+    margin-bottom: 0.5rem;
+  }
+  #empty-sub {
+    font-size: 0.85rem;
+    color: #aaa;
+    max-width: 230px;
+    margin: 0 auto 1.5rem;
+    line-height: 1.5;
+  }
+  #load-btn {
+    display: inline-block;
+    background: var(--active);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 0.8rem 2.2rem;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 0.88rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform 0.1s, opacity 0.1s;
+  }
+  #load-btn:active { transform: scale(0.97); opacity: 0.9; }
+  /* ── LOADING ── */
+  #loading-state {
+    display: none;
+    text-align: center;
+    padding: 3.5rem 1rem;
+  }
+  #loading-ball {
+    font-size: 2.5rem;
+    margin-bottom: 1rem;
+    animation: bounce 0.75s ease-in-out infinite;
+  }
+  #loading-title {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 0.95rem;
+    letter-spacing: 0.1em;
+    color: #888;
+    margin-bottom: 0.4rem;
+  }
+  #loading-sub { font-size: 0.75rem; color: #bbb; letter-spacing: 0.04em; }
+  /* ── RESULT ── */
+  #result-state { display: none; }
+  #result-header {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 0.7rem;
+    border-left: 4px solid var(--active);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  #result-label {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 0.95rem;
+    font-weight: 800;
+    color: var(--active);
+    letter-spacing: 0.06em;
+  }
+  #result-time { font-size: 0.68rem; color: #bbb; margin-top: 0.15rem; }
+  #result-flag { font-size: 1.6rem; }
+  #result-body {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 1rem 1rem 1.2rem;
+  }
+  /* ── TEXT FORMATTING ── */
+  .result-section-header {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 0.82rem;
+    font-weight: 800;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--active);
+    margin-top: 1.1rem;
+    margin-bottom: 0.35rem;
+    border-bottom: 1px solid;
+    border-color: color-mix(in srgb, var(--active) 25%, transparent);
+    padding-bottom: 0.2rem;
+  }
+  .result-section-header:first-child { margin-top: 0; }
+  .result-bullet {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.35rem;
+    align-items: flex-start;
+  }
+  .result-bullet-arrow { color: var(--active); flex-shrink: 0; font-size: 0.8rem; margin-top: 0.18rem; }
+  .result-bullet-text { font-size: 0.875rem; line-height: 1.55; color: #2d2d2d; }
+  .result-para { font-size: 0.875rem; line-height: 1.6; color: #2d2d2d; margin-bottom: 0.2rem; }
+  .result-spacer { height: 0.4rem; }
+  #result-footer {
+    text-align: center;
+    padding: 0.9rem 0 0.2rem;
+    font-size: 0.68rem;
+    color: #ccc;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+  }
+  /* ── ERROR ── */
+  #error-state {
+    display: none;
+    background: #fff0f0;
+    border: 1px solid #ffcccc;
+    border-radius: 12px;
+    padding: 1rem;
+    color: #cc3333;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  #error-retry {
+    display: inline-block;
+    margin-top: 0.6rem;
+    color: var(--active);
+    background: none;
+    border: none;
+    font-weight: 700;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 0.88rem;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+  }
+  /* ── ANIMATIONS ── */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+  @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .fade-in { animation: fadeIn 0.35s ease both; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div id="header">
+  <div id="header-top">
+    <div id="logo">
+      <span id="logo-flag">🇰🇷</span>
+      <div id="logo-text">
+        <div id="logo-title">ASIA BASEBALL</div>
+        <div id="logo-sub">KBO · NPB · Daily Dashboard</div>
+      </div>
+    </div>
+    <button id="refresh-btn" onclick="handleRefresh()">
+      <span id="refresh-icon">↻</span>
+      <span id="refresh-label">REFRESH</span>
+    </button>
+  </div>
+  <div id="league-tabs">
+    <button class="league-tab active" data-league="KBO" onclick="setLeague('KBO')">🇰🇷 KBO</button>
+    <button class="league-tab" data-league="NPB" onclick="setLeague('NPB')">🇯🇵 NPB</button>
+    <button class="league-tab" data-league="Both" onclick="setLeague('Both')">🌏 BOTH</button>
+  </div>
+</div>
+
+<!-- SECTION TABS -->
+<div id="section-tabs">
+  <button class="section-tab active" data-section="Scores" onclick="setSection('Scores')">⚾ SCORES</button>
+  <button class="section-tab" data-section="Standings" onclick="setSection('Standings')">🏆 STANDINGS</button>
+  <button class="section-tab" data-section="Top Performers" onclick="setSection('Top Performers')">⭐ TOP PERFORMERS</button>
+  <button class="section-tab" data-section="News & Buzz" onclick="setSection('News & Buzz')">📰 NEWS</button>
+</div>
+
+<!-- CONTENT -->
+<div id="content">
+  <div id="empty-state">
+    <div id="empty-ball">⚾</div>
+    <div id="empty-title">READY TO LOAD</div>
+    <p id="empty-sub">Tap below to fetch today's data — translated from Korean & Japanese</p>
+    <button id="load-btn" onclick="fetchData(false)">LOAD DATA →</button>
+  </div>
+
+  <div id="loading-state">
+    <div id="loading-ball">⚾</div>
+    <div id="loading-title">SEARCHING LATEST DATA...</div>
+    <div id="loading-sub">Translating from Korean &amp; Japanese</div>
+  </div>
+
+  <div id="result-state">
+    <div id="result-header">
+      <div>
+        <div id="result-label"></div>
+        <div id="result-time"></div>
+      </div>
+      <div id="result-flag"></div>
+    </div>
+    <div id="result-body"></div>
+    <div id="result-footer">DATA VIA WEB SEARCH · TRANSLATED BY AI</div>
+  </div>
+
+  <div id="error-state">
+    <strong>Error loading data.</strong> <span id="error-msg"></span>
+    <br>
+    <button id="error-retry" onclick="fetchData(true)">Try again →</button>
+  </div>
+</div>
+
+<script>
+const LEAGUE_CONFIG = {
+  KBO:  { flag: '🇰🇷', color: '#C8102E', label: 'KBO (Korea)' },
+  NPB:  { flag: '🇯🇵', color: '#003087', label: 'NPB (Japan)' },
+  Both: { flag: '🌏', color: '#1a1a2e', label: 'KBO + NPB' },
+};
+
+const SECTION_ICONS = {
+  'Scores': '⚾', 'Standings': '🏆', 'Top Performers': '⭐', 'News & Buzz': '📰'
+};
+
+let activeLeague = 'KBO';
+let activeSection = 'Scores';
+let cache = {};
+let isLoading = false;
+
+function buildPrompt(league, section) {
+  const leagueNames = league === 'Both'
+    ? 'KBO (Korean Baseball Organization) and NPB (Nippon Professional Baseball)'
+    : league === 'KBO' ? 'KBO (Korean Baseball Organization)' : 'NPB (Nippon Professional Baseball)';
+  const dateStr = new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+  const prompts = {
+    'Scores': `Search for and provide today's (${dateStr}) game scores and results for ${leagueNames}. Include final scores, winning/losing pitchers, notable plays or walk-offs, and any games scheduled later today. Translate all team and player names to English. Format clearly with each game on its own line.`,
+    'Standings': `Search for the current standings for ${leagueNames} as of ${dateStr}. Include rank, team name (in English), wins, losses, games behind, and winning percentage. For NPB include both Central and Pacific leagues. Translate everything to English.`,
+    'Top Performers': `Search for the top statistical performers in ${leagueNames} as of ${dateStr}. Include batting average leaders, home run leaders, RBI leaders, ERA leaders, strikeout leaders, and wins leaders. Translate all player and team names to English. Note any record-breaking performances.`,
+    'News & Buzz': `Search for the latest news and notable stories from ${leagueNames} around ${dateStr}. Include injury updates, roster moves, trades, player milestones, managerial news, and fan buzz. Translate all names to English. Summarize 5-7 key stories.`,
+  };
+  return `You are an expert analyst covering Asian baseball leagues. ${prompts[section]}\n\nFORMATTING:\n- Translate all Korean/Japanese text to English\n- Romanize player names (e.g. "Ryu Hyun-jin")\n- Use **bold headers** for sections\n- Use bullet points starting with "- " for list items\n- Keep under 600 words for mobile readability\n- If exact today's data is unavailable, use most recent data and note the date`;
+}
+
+function setLeague(league) {
+  activeLeague = league;
+  const cfg = LEAGUE_CONFIG[league];
+  document.documentElement.style.setProperty('--active', cfg.color);
+  document.getElementById('logo-flag').textContent = cfg.flag;
+  document.querySelectorAll('.league-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.league === league);
+  });
+  const cacheKey = league + '-' + activeSection;
+  if (cache[cacheKey]) showResult(cache[cacheKey]);
+  else showEmpty();
+}
+
+function setSection(section) {
+  activeSection = section;
+  document.querySelectorAll('.section-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.section === section);
+  });
+  const cacheKey = activeLeague + '-' + section;
+  if (cache[cacheKey]) showResult(cache[cacheKey]);
+  else showEmpty();
+}
+
+function showEmpty() {
+  document.getElementById('empty-state').style.display = 'block';
+  document.getElementById('loading-state').style.display = 'none';
+  document.getElementById('result-state').style.display = 'none';
+  document.getElementById('error-state').style.display = 'none';
+}
+
+function showLoading() {
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('loading-state').style.display = 'block';
+  document.getElementById('result-state').style.display = 'none';
+  document.getElementById('error-state').style.display = 'none';
+}
+
+function showResult(text) {
+  const cfg = LEAGUE_CONFIG[activeLeague];
+  document.getElementById('result-label').textContent =
+    (SECTION_ICONS[activeSection] || '') + ' ' + activeSection.toUpperCase() + ' — ' + cfg.label.toUpperCase();
+  document.getElementById('result-time').textContent =
+    'Updated ' + new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  document.getElementById('result-flag').textContent = cfg.flag;
+  document.getElementById('result-body').innerHTML = formatText(text);
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('loading-state').style.display = 'none';
+  document.getElementById('result-state').style.display = 'block';
+  document.getElementById('result-state').classList.add('fade-in');
+  document.getElementById('error-state').style.display = 'none';
+}
+
+function showError(msg) {
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('loading-state').style.display = 'none';
+  document.getElementById('result-state').style.display = 'none';
+  document.getElementById('error-state').style.display = 'block';
+  document.getElementById('error-msg').textContent = msg;
+}
+
+function formatText(text) {
+  if (!text) return '';
+  const lines = text.split('\n');
+  let html = '';
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) { html += '<div class="result-spacer"></div>'; continue; }
+    if (/^\*\*(.+)\*\*$/.test(trimmed)) {
+      html += `<div class="result-section-header">${trimmed.replace(/\*\*/g,'')}</div>`;
+    } else if (/^[-•]/.test(trimmed)) {
+      const content = trimmed.replace(/^[-•]\s*/,'').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');
+      html += `<div class="result-bullet"><span class="result-bullet-arrow">▸</span><span class="result-bullet-text">${content}</span></div>`;
+    } else {
+      const content = trimmed.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');
+      html += `<p class="result-para">${content}</p>`;
+    }
+  }
+  return html;
+}
+
+async function fetchData(forceRefresh) {
+  if (isLoading) return;
+  const cacheKey = activeLeague + '-' + activeSection;
+  if (!forceRefresh && cache[cacheKey]) { showResult(cache[cacheKey]); return; }
+  isLoading = true;
+  showLoading();
+  const icon = document.getElementById('refresh-icon');
+  const label = document.getElementById('refresh-label');
+  icon.classList.add('spinning');
+  label.textContent = 'LOADING';
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        messages: [{ role: 'user', content: buildPrompt(activeLeague, activeSection) }],
+      }),
+    });
+    if (!resp.ok) throw new Error('API error ' + resp.status);
+    const data = await resp.json();
+    const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+    cache[cacheKey] = text;
+    showResult(text);
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    isLoading = false;
+    icon.classList.remove('spinning');
+    label.textContent = 'REFRESH';
+  }
+}
+
+function handleRefresh() { fetchData(true); }
+</script>
+</body>
+</html>
