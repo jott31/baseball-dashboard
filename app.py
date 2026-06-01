@@ -1,7 +1,7 @@
 import streamlit as st
 import requests
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date as date_type
 from zoneinfo import ZoneInfo
 
 # ── PAGE CONFIG ───────────────────────────────────────────────────────────────
@@ -22,247 +22,215 @@ html, body, [class*="css"] {
     background-color: #0a0a0a;
     color: #e8e8e8;
 }
+.block-container { padding-top: 1.5rem !important; max-width: 1100px; }
 
-/* Strip default Streamlit padding */
-.block-container { padding-top: 1.5rem !important; max-width: 1200px; }
-
-/* ── MASTHEAD ── */
 .masthead {
     display: flex; align-items: baseline; gap: 14px;
-    border-bottom: 2px solid #222; padding-bottom: 0.8rem; margin-bottom: 1.4rem;
+    border-bottom: 2px solid #1e1e1e; padding-bottom: 0.8rem; margin-bottom: 1.2rem;
 }
 .masthead-title {
     font-family: 'Bebas Neue', sans-serif;
-    font-size: 2.6rem; letter-spacing: 0.08em;
-    color: #fff; line-height: 1;
+    font-size: 2.6rem; letter-spacing: 0.08em; color: #fff; line-height: 1;
 }
 .masthead-sub {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.68rem; color: #555; letter-spacing: 0.18em;
-    text-transform: uppercase;
+    font-size: 0.65rem; color: #444; letter-spacing: 0.2em; text-transform: uppercase;
 }
 
-/* ── DATE PILL NAV ── */
-.date-strip {
-    display: flex; gap: 6px; margin-bottom: 1.2rem; flex-wrap: wrap;
-}
-
-/* ── SECTION HEADER ── */
 .section-label {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.62rem; letter-spacing: 0.22em; color: #555;
-    text-transform: uppercase; margin-bottom: 0.7rem; margin-top: 0.2rem;
+    font-size: 0.6rem; letter-spacing: 0.24em; color: #444;
+    text-transform: uppercase; margin-bottom: 0.6rem; margin-top: 0.4rem;
 }
 
 /* ── SCORE CARD ── */
 .card {
-    background: #111; border: 1px solid #1e1e1e;
-    border-radius: 6px; padding: 14px 18px;
-    margin-bottom: 8px; transition: border-color 0.15s;
-    position: relative;
+    background: #111; border: 1px solid #1e1e1e; border-radius: 6px;
+    padding: 14px 18px; margin-bottom: 8px;
 }
-.card:hover { border-color: #333; }
-
-.card-league {
+.card-league-row {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.58rem; letter-spacing: 0.2em; color: #555;
-    text-transform: uppercase; margin-bottom: 8px;
+    font-size: 0.58rem; letter-spacing: 0.2em; color: #3a3a3a;
+    text-transform: uppercase; margin-bottom: 10px;
 }
 .card-teams {
-    display: flex; justify-content: space-between; align-items: center;
-    gap: 8px;
+    display: flex; justify-content: space-between;
+    align-items: center; gap: 12px;
 }
 .team-block { flex: 1; }
 .team-name {
     font-family: 'Bebas Neue', sans-serif;
-    font-size: 1.45rem; letter-spacing: 0.05em;
-    color: #e8e8e8; line-height: 1;
+    font-size: 1.4rem; letter-spacing: 0.04em; line-height: 1;
 }
-.team-name.winner { color: #fff; }
-.team-name.loser  { color: #555; }
-
-.score-block {
-    display: flex; gap: 16px; align-items: center;
+.team-name.winner { color: #f0f0f0; }
+.team-name.loser  { color: #3a3a3a; }
+.team-name.neutral { color: #999; }
+.score-mid {
+    display: flex; gap: 14px; align-items: center;
     font-family: 'IBM Plex Mono', monospace;
 }
 .score {
-    font-size: 2rem; font-weight: 600; min-width: 2ch; text-align: right;
+    font-size: 2.1rem; font-weight: 600; min-width: 1.8ch; text-align: center;
 }
 .score.winner { color: #f0f0f0; }
-.score.loser  { color: #3a3a3a; }
-.score-divider { color: #333; font-size: 1.2rem; }
-
+.score.loser  { color: #2e2e2e; }
+.score.neutral { color: #888; }
+.score-sep { color: #252525; font-size: 1.1rem; }
 .card-footer {
     display: flex; justify-content: space-between; align-items: center;
-    margin-top: 10px; padding-top: 8px; border-top: 1px solid #1a1a1a;
+    margin-top: 10px; padding-top: 8px; border-top: 1px solid #181818;
 }
 .card-meta {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.62rem; color: #444; letter-spacing: 0.1em;
+    font-size: 0.6rem; color: #333; letter-spacing: 0.1em;
 }
-.card-links { display: flex; gap: 10px; }
+.card-links { display: flex; gap: 10px; flex-wrap: wrap; }
 .ext-link {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.62rem; letter-spacing: 0.08em;
-    color: #555; text-decoration: none; border-bottom: 1px solid #2a2a2a;
-    transition: color 0.15s, border-color 0.15s; white-space: nowrap;
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.6rem;
+    letter-spacing: 0.08em; color: #444; text-decoration: none;
+    border-bottom: 1px solid #222; transition: color 0.12s, border-color 0.12s;
+    white-space: nowrap;
 }
-.ext-link:hover { color: #aaa; border-color: #555; }
+.ext-link:hover { color: #bbb; border-color: #555; }
 
-/* ── LINESCORE TABLE ── */
-.linescore-wrap {
-    margin-top: 10px; overflow-x: auto;
-}
+/* ── LINESCORE ── */
+.linescore-wrap { margin: 8px 0; overflow-x: auto; }
 .linescore {
     border-collapse: collapse; width: 100%;
-    font-family: 'IBM Plex Mono', monospace; font-size: 0.7rem;
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.68rem;
 }
 .linescore th {
-    color: #444; font-weight: 400; letter-spacing: 0.12em;
-    padding: 3px 8px; text-align: center; border-bottom: 1px solid #1e1e1e;
+    color: #333; font-weight: 400; letter-spacing: 0.12em;
+    padding: 3px 7px; text-align: center; border-bottom: 1px solid #1a1a1a;
 }
-.linescore td {
-    padding: 3px 8px; text-align: center; color: #888;
-    border-bottom: 1px dotted #181818;
-}
-.linescore td.team-col { text-align: left; color: #555; }
-.linescore td.total { font-weight: 600; color: #ccc; border-left: 1px solid #222; }
+.linescore td { padding: 3px 7px; text-align: center; color: #777; }
+.linescore td.team-col { text-align: left; color: #444; min-width: 90px; }
+.linescore td.total { font-weight: 600; color: #bbb; border-left: 1px solid #1e1e1e; }
 
-/* ── SCHEDULE CARD ── */
+/* ── SCHEDULE ── */
 .sched-card {
-    background: #0e0e0e; border: 1px solid #1a1a1a;
-    border-radius: 6px; padding: 12px 18px; margin-bottom: 6px;
+    background: #0d0d0d; border: 1px solid #181818;
+    border-radius: 6px; padding: 12px 16px; margin-bottom: 6px;
+}
+.sched-date-group {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6rem; color: #333; letter-spacing: 0.2em;
+    text-transform: uppercase; margin: 14px 0 6px 0;
 }
 .sched-matchup {
     display: flex; justify-content: space-between; align-items: center;
 }
 .sched-teams {
     font-family: 'Bebas Neue', sans-serif;
-    font-size: 1.3rem; letter-spacing: 0.05em; color: #ccc;
+    font-size: 1.3rem; letter-spacing: 0.05em; color: #bbb;
 }
-.sched-at { color: #333; margin: 0 6px; }
+.sched-at { color: #2a2a2a; margin: 0 8px; }
 .sched-time {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.72rem; color: #555; letter-spacing: 0.1em;
+    font-size: 0.68rem; color: #444; letter-spacing: 0.1em;
 }
 .sched-venue {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.6rem; color: #333; letter-spacing: 0.1em;
-    margin-top: 3px;
-}
-.sched-league {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.58rem; color: #3a3a3a; letter-spacing: 0.2em;
-    text-transform: uppercase; margin-bottom: 4px;
+    font-size: 0.58rem; color: #2a2a2a; margin-top: 3px;
 }
 
-/* ── DATE TABS ── */
-div[data-baseweb="tab-list"] { gap: 4px; }
-div[data-baseweb="tab"] {
-    background: #111 !important; border-radius: 4px !important;
-    border: 1px solid #1e1e1e !important;
-    font-family: 'IBM Plex Mono', monospace !important;
-    font-size: 0.72rem !important; letter-spacing: 0.1em !important;
-    padding: 6px 14px !important; color: #555 !important;
-}
-div[aria-selected="true"][data-baseweb="tab"] {
-    background: #1a1a1a !important; color: #ddd !important;
-    border-color: #333 !important;
-}
-button[data-testid="stBaseButton-secondary"] {
-    background: #111; border: 1px solid #1e1e1e; color: #666;
-    font-family: 'IBM Plex Mono', monospace; font-size: 0.72rem;
-    letter-spacing: 0.1em; border-radius: 4px;
-}
-button[data-testid="stBaseButton-secondary"]:hover { border-color: #333; color: #aaa; }
-
-/* ── EMPTY STATE ── */
 .empty {
-    font-family: 'IBM Plex Mono', monospace; font-size: 0.75rem;
-    color: #333; letter-spacing: 0.12em; padding: 24px 0;
-    text-align: center;
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.72rem;
+    color: #2a2a2a; letter-spacing: 0.14em; padding: 30px 0; text-align: center;
+}
+.no-games {
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.78rem;
+    color: #333; letter-spacing: 0.1em; padding: 24px 0; text-align: center;
+    border: 1px dashed #1a1a1a; border-radius: 6px; margin: 8px 0;
 }
 
-/* hide streamlit chrome */
+/* Date pill */
+.date-display {
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.72rem;
+    color: #666; letter-spacing: 0.12em;
+}
+
 #MainMenu, footer, header { visibility: hidden; }
 div[data-testid="stDecoration"] { display: none; }
+
+/* Streamlit tab styling */
+div[data-baseweb="tab-list"] { gap: 4px; border-bottom: 1px solid #1a1a1a !important; }
+div[data-baseweb="tab"] {
+    background: transparent !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+    font-size: 0.72rem !important; letter-spacing: 0.12em !important;
+    color: #444 !important; padding: 8px 16px !important;
+    border-bottom: 2px solid transparent !important;
+}
+div[aria-selected="true"][data-baseweb="tab"] {
+    color: #ddd !important; border-bottom: 2px solid #ddd !important;
+    background: transparent !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
-TSDB      = "https://www.thesportsdb.com/api/v1/json/123"
-HEADERS   = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-             "Accept": "application/json"}
-
-LEAGUES = {
-    "NPB": {"id": "4591", "flag": "🇯🇵", "bbref_prefix": "jpn"},
-    "KBO": {"id": "4830", "flag": "🇰🇷", "bbref_prefix": "kor"},
+TSDB    = "https://www.thesportsdb.com/api/v1/json/123"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json",
 }
 
-# Japan Standard Time / Korea Standard Time (both UTC+9)
 JST = ZoneInfo("Asia/Tokyo")
 
+# TSDB league name strings (from strLeague field in API response)
+NPB_LEAGUE_NAME = "Nippon Professional Baseball"
+KBO_LEAGUE_NAME = "KBO League"
+NPB_LEAGUE_ID   = "4591"
+KBO_LEAGUE_ID   = "4830"
 
-# ── HELPERS ───────────────────────────────────────────────────────────────────
+
+# ── TIME HELPERS ──────────────────────────────────────────────────────────────
 
 def now_jst() -> datetime:
     return datetime.now(JST)
 
-
-def jst_today() -> str:
-    return now_jst().strftime("%Y-%m-%d")
-
-
-def jst_yesterday() -> str:
-    return (now_jst() - timedelta(days=1)).strftime("%Y-%m-%d")
-
+def jst_date_str(d: datetime) -> str:
+    return d.strftime("%Y-%m-%d")
 
 def fmt_display_date(d: str) -> str:
     try:
-        return datetime.strptime(d, "%Y-%m-%d").strftime("%b %-d")
+        return datetime.strptime(d, "%Y-%m-%d").strftime("%A, %B %-d")
     except Exception:
         return d
 
-
-def winner_loser(home_score, away_score):
-    if home_score is None or away_score is None:
-        return None, None
-    h, a = int(home_score), int(away_score)
-    if h > a:
-        return "home", "away"
-    elif a > h:
-        return "away", "home"
-    return "tie", "tie"
-
-
-def bbref_search_url(player_name: str, league_prefix: str) -> str:
-    slug = player_name.lower().replace(" ", "+")
-    return f"https://www.baseball-reference.com/search/search.fcgi?search={slug}"
-
-
-def proeyekyuu_game_url(event_id: str) -> str:
-    return f"https://proeyekyuu.com/game/"
-
-
-def kbo_schedule_url() -> str:
-    return "https://eng.koreabaseball.com/Schedule/Schedule.aspx"
+def utc_time_to_jst(date_str: str, time_str: str) -> str:
+    """Convert TSDB UTC time to JST display string."""
+    if not time_str:
+        return ""
+    try:
+        t = time_str[:5]
+        dt_utc = datetime.strptime(f"{date_str} {t}", "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+        return dt_utc.astimezone(JST).strftime("%-I:%M %p JST")
+    except Exception:
+        return time_str[:5] + " UTC"
 
 
 # ── API CALLS ─────────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=120)
-def fetch_past_events(league_id: str) -> list:
+@st.cache_data(ttl=180)
+def fetch_games_on_date(date_str: str) -> list:
+    """
+    Fetch ALL baseball events on a given date using eventsday.php.
+    Returns the full list; caller filters by strLeague.
+    """
+    url = f"{TSDB}/eventsday.php?d={date_str}&s=Baseball"
     try:
-        r = requests.get(f"{TSDB}/eventspastleague.php?id={league_id}",
-                         headers=HEADERS, timeout=12)
+        r = requests.get(url, headers=HEADERS, timeout=12)
         r.raise_for_status()
         return r.json().get("events") or []
     except Exception:
         return []
 
-
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=180)
 def fetch_next_events(league_id: str) -> list:
+    """Upcoming games for a league (~15 events)."""
     try:
         r = requests.get(f"{TSDB}/eventsnextleague.php?id={league_id}",
                          headers=HEADERS, timeout=12)
@@ -271,10 +239,8 @@ def fetch_next_events(league_id: str) -> list:
     except Exception:
         return []
 
-
 @st.cache_data(ttl=300)
 def fetch_event_stats(event_id: str) -> list:
-    """Returns list of stat dicts: {strTeam, strStat, intValue}"""
     try:
         r = requests.get(f"{TSDB}/lookupeventstats.php?id={event_id}",
                          headers=HEADERS, timeout=10)
@@ -283,10 +249,8 @@ def fetch_event_stats(event_id: str) -> list:
     except Exception:
         return []
 
-
 @st.cache_data(ttl=300)
 def fetch_event_lineup(event_id: str) -> list:
-    """Returns lineup/roster entries for the event."""
     try:
         r = requests.get(f"{TSDB}/lookuplineup.php?id={event_id}",
                          headers=HEADERS, timeout=10)
@@ -294,7 +258,6 @@ def fetch_event_lineup(event_id: str) -> list:
         return r.json().get("lineup") or []
     except Exception:
         return []
-
 
 @st.cache_data(ttl=300)
 def fetch_event_detail(event_id: str) -> dict:
@@ -308,280 +271,239 @@ def fetch_event_detail(event_id: str) -> dict:
         return {}
 
 
-# ── LINESCORE PARSER ──────────────────────────────────────────────────────────
+# ── LINESCORE ─────────────────────────────────────────────────────────────────
 
-def parse_linescore(stats: list, home: str, away: str):
-    """
-    TSDB event stats may contain inning-by-inning entries labeled
-    'Inning 1', 'Inning 2', ... plus 'Runs','Hits','Errors' totals.
-    Returns dict with innings + totals per team, or None if unavailable.
-    """
+def parse_linescore(stats: list, home: str, away: str) -> dict | None:
     if not stats:
         return None
-
-    innings = {}
-    totals  = {}
-
+    innings: dict = {}
+    totals: dict  = {}
     for s in stats:
         team = s.get("strTeam", "")
         stat = s.get("strStat", "")
         val  = s.get("intValue", "")
-
-        # Normalise team label — TSDB uses full names
-        t = "home" if any(x in team for x in [home[:4], "home", "Home"]) else "away"
-
+        # Map to home/away by partial name match
+        side = "home" if home[:5].lower() in team.lower() else "away"
         m = re.match(r"^Inning\s+(\d+)$", stat, re.IGNORECASE)
         if m:
-            inn = int(m.group(1))
-            innings.setdefault(t, {})[inn] = val
+            innings.setdefault(side, {})[int(m.group(1))] = val
         elif stat in ("Runs", "Hits", "Errors"):
-            totals.setdefault(t, {})[stat[0]] = val  # R, H, E
-
+            totals.setdefault(side, {})[stat[0]] = val
     if not innings:
         return None
-
-    max_inn = max(
-        (max(d.keys()) for d in innings.values() if d),
-        default=0
-    )
+    max_inn = max((max(d.keys()) for d in innings.values() if d), default=0)
     if max_inn == 0:
         return None
-
     return {"innings": innings, "totals": totals, "max_inn": max_inn,
             "home": home, "away": away}
 
-
-def render_linescore(ls):
-    if not ls:
-        return
-    max_inn = ls["max_inn"]
-    inn_nums = list(range(1, max_inn + 1))
-
-    header_cells = "<th class='team-col'></th>" + \
-        "".join(f"<th>{i}</th>" for i in inn_nums) + \
-        "<th class='total'>R</th><th class='total'>H</th><th class='total'>E</th>"
-
+def render_linescore(ls: dict):
+    max_inn   = ls["max_inn"]
+    inn_nums  = list(range(1, max_inn + 1))
+    header    = "<th class='team-col'></th>" + \
+                "".join(f"<th>{i}</th>" for i in inn_nums) + \
+                "<th class='total'>R</th><th class='total'>H</th><th class='total'>E</th>"
     rows = ""
     for side in ("away", "home"):
-        team_name = ls[side][:12]
-        inn_data  = ls["innings"].get(side, {})
-        tot_data  = ls["totals"].get(side, {})
-        cells = f"<td class='team-col'>{team_name}</td>"
+        name     = ls[side][:14]
+        inn_data = ls["innings"].get(side, {})
+        tot_data = ls["totals"].get(side, {})
+        cells    = f"<td class='team-col'>{name}</td>"
         for i in inn_nums:
             v = inn_data.get(i, "")
             cells += f"<td>{v if v != '' else '–'}</td>"
-        cells += f"<td class='total'>{tot_data.get('R','')}</td>"
-        cells += f"<td class='total'>{tot_data.get('H','')}</td>"
-        cells += f"<td class='total'>{tot_data.get('E','')}</td>"
+        cells += f"<td class='total'>{tot_data.get('R', '')}</td>"
+        cells += f"<td class='total'>{tot_data.get('H', '')}</td>"
+        cells += f"<td class='total'>{tot_data.get('E', '')}</td>"
         rows += f"<tr>{cells}</tr>"
-
-    st.markdown(f"""
-    <div class='linescore-wrap'>
-      <table class='linescore'>
-        <thead><tr>{header_cells}</tr></thead>
-        <tbody>{rows}</tbody>
-      </table>
-    </div>""", unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='linescore-wrap'><table class='linescore'>"
+        f"<thead><tr>{header}</tr></thead><tbody>{rows}</tbody>"
+        f"</table></div>",
+        unsafe_allow_html=True,
+    )
 
 
-# ── LINEUP / BOX SCORE DISPLAY ────────────────────────────────────────────────
+# ── LINEUP DISPLAY ─────────────────────────────────────────────────────────────
 
-def render_lineup(lineup: list, home: str, away: str, league: str, bbref_prefix: str):
-    """
-    Render TSDB lineup entries split by team, with links to Baseball Reference
-    and (for NPB) ProEyeKyuu.
-    """
+def render_lineup(lineup: list, home: str, away: str, league: str):
     if not lineup:
-        st.markdown("<div class='empty'>No lineup data available from TheSportsDB for this game.</div>",
-                    unsafe_allow_html=True)
+        st.markdown(
+            "<div style='font-family:IBM Plex Mono,monospace;font-size:0.65rem;"
+            "color:#2e2e2e;padding:8px 0'>No lineup data from TheSportsDB for this game.</div>",
+            unsafe_allow_html=True,
+        )
         return
 
-    # Split by team
-    away_players, home_players = [], []
+    away_p, home_p = [], []
     for p in lineup:
         team = p.get("strTeam", "")
-        if any(x in team for x in [home[:5], "home", "Home"]):
-            home_players.append(p)
+        if home[:5].lower() in team.lower():
+            home_p.append(p)
         else:
-            away_players.append(p)
-
-    # Fallback: split first half / second half
-    if not away_players and not home_players:
+            away_p.append(p)
+    if not away_p and not home_p:
         mid = len(lineup) // 2
-        away_players = lineup[:mid]
-        home_players = lineup[mid:]
+        away_p, home_p = lineup[:mid], lineup[mid:]
 
-    def player_row(p: dict) -> str:
-        name     = p.get("strPlayer", p.get("strName", "Unknown"))
-        position = p.get("strPosition", "")
-        number   = p.get("strNumber", "")
-        bbref    = bbref_search_url(name, bbref_prefix)
-        pek_link = ""
-        if league == "NPB":
-            pek_link = f' <a class="ext-link" href="https://proeyekyuu.com/player-registry/" target="_blank">PEK</a>'
-        num_str  = f"#{number} " if number else ""
-        pos_str  = f" <span style='color:#3a3a3a;font-size:0.62rem'>{position}</span>" if position else ""
+    def player_html(p: dict) -> str:
+        name = p.get("strPlayer") or p.get("strName") or "Unknown"
+        pos  = p.get("strPosition", "")
+        num  = p.get("strNumber", "")
+        bbref = f"https://www.baseball-reference.com/search/search.fcgi?search={name.replace(' ', '+')}"
+        pek   = ' <a class="ext-link" href="https://proeyekyuu.com/player-registry/" target="_blank">ProEyeKyuu</a>' \
+                if league == "NPB" else ""
+        num_s = f"<span style='color:#2e2e2e;font-size:0.6rem;margin-right:4px'>#{num}</span>" if num else ""
+        pos_s = f"<span style='color:#2e2e2e;font-size:0.6rem;margin-left:4px'>{pos}</span>" if pos else ""
         return (
-            f"<div style='padding:5px 0; border-bottom:1px dotted #161616; "
-            f"font-family:IBM Plex Sans,sans-serif; font-size:0.82rem;'>"
-            f"<span style='color:#444;font-family:IBM Plex Mono,monospace;font-size:0.62rem'>{num_str}</span>"
-            f"<span style='color:#ccc'>{name}</span>{pos_str} "
-            f"<a class='ext-link' href='{bbref}' target='_blank'>BBRef</a>"
-            f"{pek_link}</div>"
+            f"<div style='padding:5px 0;border-bottom:1px solid #141414;"
+            f"font-size:0.82rem'>"
+            f"{num_s}<span style='color:#ccc'>{name}</span>{pos_s} "
+            f"<a class='ext-link' href='{bbref}' target='_blank'>BBRef</a>{pek}</div>"
         )
 
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown(f"<div class='section-label'>{away} lineup</div>", unsafe_allow_html=True)
-        if away_players:
-            st.markdown("".join(player_row(p) for p in away_players), unsafe_allow_html=True)
-        else:
-            st.markdown("<div class='empty'>—</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='section-label'>{away[:20]} lineup</div>", unsafe_allow_html=True)
+        st.markdown("".join(player_html(p) for p in away_p) if away_p
+                    else "<div style='color:#2e2e2e;font-size:0.7rem'>—</div>",
+                    unsafe_allow_html=True)
     with c2:
-        st.markdown(f"<div class='section-label'>{home} lineup</div>", unsafe_allow_html=True)
-        if home_players:
-            st.markdown("".join(player_row(p) for p in home_players), unsafe_allow_html=True)
-        else:
-            st.markdown("<div class='empty'>—</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='section-label'>{home[:20]} lineup</div>", unsafe_allow_html=True)
+        st.markdown("".join(player_html(p) for p in home_p) if home_p
+                    else "<div style='color:#2e2e2e;font-size:0.7rem'>—</div>",
+                    unsafe_allow_html=True)
 
 
-# ── SCORE CARD RENDERER ───────────────────────────────────────────────────────
+# ── SCORE CARD ────────────────────────────────────────────────────────────────
 
-def render_score_card(event: dict, league: str, league_info: dict, show_detail: bool = False):
+def render_score_card(event: dict, league: str):
     home     = event.get("strHomeTeam", "?")
     away     = event.get("strAwayTeam", "?")
     hs_raw   = event.get("intHomeScore")
     as_raw   = event.get("intAwayScore")
-    date     = event.get("dateEvent", "")
+    date_str = event.get("dateEvent", "")
     venue    = event.get("strVenue", "")
     event_id = event.get("idEvent", "")
-    flag     = league_info["flag"]
-    bbpfx    = league_info["bbref_prefix"]
 
-    final    = hs_raw is not None and as_raw is not None
-    win_side, lose_side = winner_loser(hs_raw, as_raw)
+    final = hs_raw is not None and as_raw is not None
 
-    home_cls = "winner" if win_side == "home" else ("loser" if lose_side == "home" else "")
-    away_cls = "winner" if win_side == "away" else ("loser" if lose_side == "away" else "")
-    h_cls    = "winner" if win_side == "home" else ("loser" if lose_side == "home" else "")
-    a_cls    = "winner" if win_side == "away" else ("loser" if lose_side == "away" else "")
-
-    hs_display = str(hs_raw) if final else "—"
-    as_display = str(as_raw) if final else "—"
+    # Winner/loser styling
+    if final:
+        hs, as_ = int(hs_raw), int(as_raw)
+        if hs > as_:
+            h_cls, a_cls = "winner", "loser"
+        elif as_ > hs:
+            h_cls, a_cls = "loser", "winner"
+        else:
+            h_cls = a_cls = "neutral"
+        hs_disp, as_disp = str(hs_raw), str(as_raw)
+    else:
+        h_cls = a_cls = "neutral"
+        hs_disp = as_disp = "–"
 
     # External links
-    bbref_game = f"https://www.baseball-reference.com/search/search.fcgi?search={away.replace(' ','+')}+{home.replace(' ','+')}"
+    venue_str = f" · {venue}" if venue else ""
+    away_q    = away.replace(" ", "+")
+    home_q    = home.replace(" ", "+")
+    bbref_url = f"https://www.baseball-reference.com/search/search.fcgi?search={away_q}+{home_q}"
+    year      = date_str[:4] if date_str else "2026"
+
     if league == "NPB":
-        year_str = date[:4] if date else "2026"
-        ext_links = (
+        links_html = (
             f'<a class="ext-link" href="https://proeyekyuu.com/game/" target="_blank">ProEyeKyuu</a>'
-            f'<a class="ext-link" href="https://npb.jp/bis/eng/{year_str}/games/" target="_blank">NPB.jp</a>'
+            f'<a class="ext-link" href="https://npb.jp/bis/eng/{year}/games/" target="_blank">NPB.jp</a>'
+            f'<a class="ext-link" href="{bbref_url}" target="_blank">BBRef</a>'
         )
     else:
-        ext_links = (
+        links_html = (
             f'<a class="ext-link" href="https://eng.koreabaseball.com/Schedule/GameCenter/Main.aspx" target="_blank">KBO</a>'
+            f'<a class="ext-link" href="{bbref_url}" target="_blank">BBRef</a>'
         )
-    ext_links += f'<a class="ext-link" href="{bbref_game}" target="_blank">BBRef</a>'
-
-    venue_str = f" · {venue}" if venue else ""
 
     st.markdown(f"""
     <div class="card">
-      <div class="card-league">{flag} {league}{venue_str}</div>
+      <div class="card-league-row">{venue_str.strip(" · ")}</div>
       <div class="card-teams">
         <div class="team-block">
-          <div class="team-name {away_cls}">{away}</div>
+          <div class="team-name {a_cls}">{away}</div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:0.6rem;color:#2e2e2e;margin-top:2px">AWAY</div>
         </div>
-        <div class="score-block">
-          <span class="score {a_cls}">{as_display}</span>
-          <span class="score-divider">·</span>
-          <span class="score {h_cls}">{hs_display}</span>
+        <div class="score-mid">
+          <span class="score {a_cls}">{as_disp}</span>
+          <span class="score-sep">·</span>
+          <span class="score {h_cls}">{hs_disp}</span>
         </div>
         <div class="team-block" style="text-align:right">
-          <div class="team-name {home_cls}" style="text-align:right">{home}</div>
+          <div class="team-name {h_cls}" style="text-align:right">{home}</div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:0.6rem;color:#2e2e2e;margin-top:2px;text-align:right">HOME</div>
         </div>
       </div>
       <div class="card-footer">
-        <div class="card-meta">{date}</div>
-        <div class="card-links">{ext_links}</div>
+        <div class="card-meta">{'FINAL' if final else 'SCHEDULED'}</div>
+        <div class="card-links">{links_html}</div>
       </div>
     </div>""", unsafe_allow_html=True)
 
-    # Expandable box score
+    # Expandable box score (only for completed games)
     if final and event_id:
-        with st.expander("Box score / Lineup", expanded=show_detail):
-            # Linescore
+        with st.expander(f"Box score — {away} @ {home}"):
+            # 1. Linescore from event stats
             stats = fetch_event_stats(event_id)
             ls    = parse_linescore(stats, home, away)
+            st.markdown("<div class='section-label'>linescore</div>", unsafe_allow_html=True)
             if ls:
-                st.markdown("<div class='section-label'>linescore</div>", unsafe_allow_html=True)
                 render_linescore(ls)
             else:
-                # Fallback: show R/H/E from intHomeScore etc. with a clean table
-                col_names = ["", "R"]
-                rows_data = [
-                    [away, as_display],
-                    [home, hs_display],
-                ]
-                # Try to get H and E from event detail
+                # Fallback: R/H/E from event detail
                 detail = fetch_event_detail(event_id)
-                hh = detail.get("intHomeHits", "")
-                ah = detail.get("intAwayHits", "")
+                hh = detail.get("intHomeHits",   "")
+                ah = detail.get("intAwayHits",   "")
                 he = detail.get("intHomeErrors", "")
                 ae = detail.get("intAwayErrors", "")
-                if hh or ah:
-                    col_names = ["", "R", "H", "E"]
-                    rows_data = [
-                        [away, as_display, ah, ae],
-                        [home, hs_display, hh, he],
-                    ]
-                header = "".join(f"<th{'  class=\"team-col\"' if i==0 else ''}>{c}</th>"
-                                 for i, c in enumerate(col_names))
-                body   = ""
-                for row in rows_data:
-                    cells = "".join(f"<td{'  class=\"team-col\"' if i==0 else ''}>{v}</td>"
-                                    for i, v in enumerate(row))
-                    body += f"<tr>{cells}</tr>"
-                st.markdown(f"""
-                <div class='section-label'>final score</div>
-                <div class='linescore-wrap'>
-                  <table class='linescore'>
-                    <thead><tr>{header}</tr></thead>
-                    <tbody>{body}</tbody>
-                  </table>
-                </div>""", unsafe_allow_html=True)
+                cols = ["", "R", "H", "E"] if (hh or ah) else ["", "R"]
+                rows_data = (
+                    [[away, as_disp, ah, ae], [home, hs_disp, hh, he]]
+                    if (hh or ah) else
+                    [[away, as_disp], [home, hs_disp]]
+                )
+                hdr = "".join(
+                    f"<th{'  class=\"team-col\"' if i == 0 else ''}>{c}</th>"
+                    for i, c in enumerate(cols)
+                )
+                bdy = "".join(
+                    "<tr>" + "".join(
+                        f"<td{'  class=\"team-col\"' if i == 0 else ''}>{v}</td>"
+                        for i, v in enumerate(row)
+                    ) + "</tr>"
+                    for row in rows_data
+                )
+                st.markdown(
+                    f"<div class='linescore-wrap'><table class='linescore'>"
+                    f"<thead><tr>{hdr}</tr></thead><tbody>{bdy}</tbody>"
+                    f"</table></div>",
+                    unsafe_allow_html=True,
+                )
 
-            # Lineup
+            # 2. Lineup / players
             st.markdown("<div class='section-label' style='margin-top:12px'>lineup / players</div>",
                         unsafe_allow_html=True)
             lineup = fetch_event_lineup(event_id)
-            render_lineup(lineup, home, away, league, bbpfx)
+            render_lineup(lineup, home, away, league)
 
 
 # ── SCHEDULE CARD ─────────────────────────────────────────────────────────────
 
-def render_schedule_card(event: dict, league: str, league_info: dict):
+def render_schedule_card(event: dict):
     home  = event.get("strHomeTeam", "?")
     away  = event.get("strAwayTeam", "?")
     date  = event.get("dateEvent", "")
-    time_ = (event.get("strTime") or "")[:5]
+    time_ = event.get("strTime", "")
     venue = event.get("strVenue", "")
-    flag  = league_info["flag"]
-
-    # Convert UTC time to JST
-    time_display = ""
-    if time_:
-        try:
-            dt_utc = datetime.strptime(f"{date} {time_}", "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
-            dt_jst = dt_utc.astimezone(JST)
-            time_display = dt_jst.strftime("%-I:%M %p JST")
-        except Exception:
-            time_display = time_ + " UTC"
-
+    time_disp = utc_time_to_jst(date, time_)
     venue_str = f"<div class='sched-venue'>{venue}</div>" if venue else ""
     st.markdown(f"""
     <div class="sched-card">
-      <div class="sched-league">{flag} {league} · {date}</div>
       <div class="sched-matchup">
         <div>
           <div class="sched-teams">
@@ -589,12 +511,87 @@ def render_schedule_card(event: dict, league: str, league_info: dict):
           </div>
           {venue_str}
         </div>
-        <div class="sched-time">{time_display}</div>
+        <div class="sched-time">{time_disp}</div>
       </div>
     </div>""", unsafe_allow_html=True)
 
 
-# ── MAIN LAYOUT ───────────────────────────────────────────────────────────────
+# ── LEAGUE SCORES PAGE ────────────────────────────────────────────────────────
+
+def scores_page(league_name_filter: str, league_label: str, date_str: str):
+    """Render all completed/live games for one league on a given date."""
+    all_events = fetch_games_on_date(date_str)
+    league_events = [
+        e for e in all_events
+        if league_name_filter.lower() in (e.get("strLeague") or "").lower()
+    ]
+
+    if not league_events:
+        st.markdown(
+            f"<div class='no-games'>No {league_label} games found for {fmt_display_date(date_str)}</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    # Split into final vs upcoming (same day but not yet played)
+    final_games = [e for e in league_events if e.get("intHomeScore") is not None]
+    upcoming    = [e for e in league_events if e.get("intHomeScore") is None]
+
+    if final_games:
+        for ev in final_games:
+            render_score_card(ev, league_label)
+
+    if upcoming:
+        st.markdown("<div class='section-label' style='margin-top:12px'>today — scheduled</div>",
+                    unsafe_allow_html=True)
+        for ev in upcoming:
+            render_score_card(ev, league_label)
+
+    if not final_games and not upcoming:
+        st.markdown(
+            f"<div class='no-games'>No games data available</div>",
+            unsafe_allow_html=True,
+        )
+
+
+# ── SCHEDULE PAGE ─────────────────────────────────────────────────────────────
+
+def schedule_page(league_id: str, league_name_filter: str, league_label: str):
+    events = fetch_next_events(league_id)
+    events = [e for e in events
+              if league_name_filter.lower() in (e.get("strLeague") or "").lower()]
+    events.sort(key=lambda e: (e.get("dateEvent", ""), e.get("strTime", "")))
+
+    if not events:
+        st.markdown(
+            f"<div class='no-games'>No upcoming {league_label} schedule available</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    # Group by date
+    by_date: dict[str, list] = {}
+    for e in events:
+        by_date.setdefault(e.get("dateEvent", "?"), []).append(e)
+
+    today_str    = jst_date_str(now_jst())
+    tomorrow_str = jst_date_str(now_jst() + timedelta(days=1))
+
+    for d in sorted(by_date.keys()):
+        if d == today_str:
+            label = f"Today — {fmt_display_date(d)}"
+        elif d == tomorrow_str:
+            label = f"Tomorrow — {fmt_display_date(d)}"
+        else:
+            label = fmt_display_date(d)
+        st.markdown(f"<div class='sched-date-group'>{label}</div>", unsafe_allow_html=True)
+        for ev in by_date[d]:
+            render_schedule_card(ev)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# MAIN APP
+# ════════════════════════════════════════════════════════════════════════════
 
 # Masthead
 st.markdown("""
@@ -603,103 +600,78 @@ st.markdown("""
   <div class="masthead-sub">Scores · Schedule · Box Scores</div>
 </div>""", unsafe_allow_html=True)
 
-today     = jst_today()
-yesterday = jst_yesterday()
+# ── TOP CONTROLS ──────────────────────────────────────────────────────────────
+ctrl_left, ctrl_mid, ctrl_right = st.columns([3, 1, 1])
 
-# Refresh button
-c_ref, c_time = st.columns([1, 5])
-with c_ref:
-    if st.button("↻ Refresh", key="refresh"):
+with ctrl_left:
+    # Calendar date picker — defaults to yesterday JST
+    # (yesterday is most likely to have complete results)
+    jst_now       = now_jst()
+    default_date  = (jst_now - timedelta(days=1)).date()
+    selected_date = st.date_input(
+        "Date (JST)",
+        value=default_date,
+        max_value=jst_now.date(),
+        min_value=date_type(2020, 1, 1),
+        label_visibility="collapsed",
+        format="YYYY-MM-DD",
+    )
+    selected_str  = selected_date.strftime("%Y-%m-%d")
+
+with ctrl_right:
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    if st.button("↻ Refresh", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-with c_time:
+
+with ctrl_mid:
     st.markdown(
-        f"<span style='font-family:IBM Plex Mono,monospace;font-size:0.62rem;color:#333;"
-        f"letter-spacing:0.12em'>JST {now_jst().strftime('%b %-d %Y  %H:%M')}</span>",
+        f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.62rem;"
+        f"color:#333;letter-spacing:0.1em;padding-top:10px'>"
+        f"JST {jst_now.strftime('%H:%M')}</div>",
         unsafe_allow_html=True,
     )
 
+# Date label
+today_str     = jst_date_str(jst_now)
+yesterday_str = jst_date_str(jst_now - timedelta(days=1))
+if selected_str == today_str:
+    date_label = f"Today · {fmt_display_date(selected_str)}"
+elif selected_str == yesterday_str:
+    date_label = f"Yesterday · {fmt_display_date(selected_str)}"
+else:
+    date_label = fmt_display_date(selected_str)
+
+st.markdown(
+    f"<div class='section-label' style='margin-bottom:1rem'>{date_label}</div>",
+    unsafe_allow_html=True,
+)
+
+# ── LEAGUE TABS ───────────────────────────────────────────────────────────────
+npb_scores_tab, kbo_scores_tab, npb_sched_tab, kbo_sched_tab = st.tabs([
+    "🇯🇵  NPB Scores",
+    "🇰🇷  KBO Scores",
+    "🇯🇵  NPB Schedule",
+    "🇰🇷  KBO Schedule",
+])
+
+with npb_scores_tab:
+    scores_page(NPB_LEAGUE_NAME, "NPB", selected_str)
+
+with kbo_scores_tab:
+    scores_page(KBO_LEAGUE_NAME, "KBO", selected_str)
+
+with npb_sched_tab:
+    schedule_page(NPB_LEAGUE_ID, NPB_LEAGUE_NAME, "NPB")
+
+with kbo_sched_tab:
+    schedule_page(KBO_LEAGUE_ID, KBO_LEAGUE_NAME, "KBO")
+
+# Footer
 st.markdown("---")
-
-# ── SCORES TAB ───────────────────────────────────────────────────────────────
-scores_tab, schedule_tab = st.tabs(["⚾  SCORES", "📅  SCHEDULE"])
-
-with scores_tab:
-
-    # Fetch all past events for both leagues
-    all_past = []
-    for lg, info in LEAGUES.items():
-        for ev in fetch_past_events(info["id"]):
-            ev["_league"] = lg
-            ev["_info"]   = info
-            all_past.append(ev)
-
-    # Collect available dates
-    dated = [(ev.get("dateEvent", ""), ev) for ev in all_past if ev.get("dateEvent")]
-    available_dates = sorted(set(d for d, _ in dated), reverse=True)
-
-    # Date selector: today, yesterday, then older
-    date_labels = []
-    for d in available_dates[:7]:
-        if d == today:
-            date_labels.append(("Today", d))
-        elif d == yesterday:
-            date_labels.append(("Yesterday", d))
-        else:
-            date_labels.append((fmt_display_date(d), d))
-
-    if not date_labels:
-        st.markdown("<div class='empty'>No recent scores available.</div>", unsafe_allow_html=True)
-    else:
-        tab_labels = [lbl for lbl, _ in date_labels]
-        date_tabs  = st.tabs(tab_labels)
-
-        for tab_obj, (lbl, sel_date) in zip(date_tabs, date_labels):
-            with tab_obj:
-                day_events = [(lg, info, ev) for lg, info, ev
-                              in [(e["_league"], e["_info"], e) for e in all_past]
-                              if ev.get("dateEvent") == sel_date]
-
-                if not day_events:
-                    st.markdown("<div class='empty'>No games found for this date.</div>",
-                                unsafe_allow_html=True)
-                    continue
-
-                # Group by league
-                for lg in ("NPB", "KBO"):
-                    lg_events = [(l, i, e) for l, i, e in day_events if l == lg]
-                    if not lg_events:
-                        continue
-                    info = LEAGUES[lg]
-                    st.markdown(f"<div class='section-label'>{info['flag']} {lg}</div>",
-                                unsafe_allow_html=True)
-                    for _, _, ev in lg_events:
-                        render_score_card(ev, lg, info)
-
-with schedule_tab:
-
-    all_next = []
-    for lg, info in LEAGUES.items():
-        for ev in fetch_next_events(info["id"]):
-            ev["_league"] = lg
-            ev["_info"]   = info
-            all_next.append(ev)
-
-    # Sort by date then time
-    all_next.sort(key=lambda e: (e.get("dateEvent", ""), e.get("strTime", "")))
-
-    # Group by date
-    sched_dates: dict[str, list] = {}
-    for ev in all_next:
-        d = ev.get("dateEvent", "Unknown")
-        sched_dates.setdefault(d, []).append(ev)
-
-    if not sched_dates:
-        st.markdown("<div class='empty'>No upcoming schedule data available.</div>",
-                    unsafe_allow_html=True)
-    else:
-        for d in sorted(sched_dates.keys()):
-            label = "Today" if d == today else ("Tomorrow" if d == (now_jst() + timedelta(days=1)).strftime("%Y-%m-%d") else fmt_display_date(d))
-            st.markdown(f"<div class='section-label'>{label} — {d}</div>", unsafe_allow_html=True)
-            for ev in sched_dates[d]:
-                render_schedule_card(ev, ev["_league"], ev["_info"])
+st.markdown(
+    "<span style='font-family:IBM Plex Mono,monospace;font-size:0.58rem;color:#2a2a2a;"
+    "letter-spacing:0.12em'>Scores: TheSportsDB · Box scores: TheSportsDB · "
+    "All times JST (UTC+9) · Cache 3min</span>",
+    unsafe_allow_html=True,
+)
