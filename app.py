@@ -2,10 +2,9 @@ import streamlit as st
 import requests
 import pandas as pd
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
-import time
+from datetime import datetime
 
-# ── PAGE CONFIG ──────────────────────────────────────────────────────────────
+# ── PAGE CONFIG ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Asia Baseball Dashboard",
     page_icon="⚾",
@@ -17,94 +16,47 @@ st.set_page_config(
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Barlow:wght@400;500;600&display=swap');
-
 html, body, [class*="css"] { font-family: 'Barlow', sans-serif; }
-
 .main-header {
     background: linear-gradient(135deg, #C8102E 0%, #8B0000 100%);
-    padding: 1.2rem 1.5rem;
-    border-radius: 12px;
-    margin-bottom: 1rem;
-    display: flex;
-    align-items: center;
-    gap: 1rem;
+    padding: 1.2rem 1.5rem; border-radius: 12px;
+    margin-bottom: 1rem; display: flex; align-items: center; gap: 1rem;
 }
 .main-header h1 {
-    font-family: 'Barlow Condensed', sans-serif;
-    font-size: 2rem;
-    font-weight: 900;
-    color: white;
-    margin: 0;
-    letter-spacing: 0.04em;
+    font-family: 'Barlow Condensed', sans-serif; font-size: 2rem;
+    font-weight: 900; color: white; margin: 0; letter-spacing: 0.04em;
 }
-.main-header p {
-    color: rgba(255,255,255,0.7);
-    font-size: 0.75rem;
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-    margin: 0;
-}
-
-.section-card {
-    background: white;
-    border-radius: 10px;
-    padding: 1rem;
-    border-left: 4px solid #C8102E;
-    margin-bottom: 0.75rem;
-    box-shadow: 0 1px 8px rgba(0,0,0,0.06);
-}
-.section-card.npb { border-left-color: #003087; }
-
+.main-header p { color: rgba(255,255,255,0.7); font-size: 0.75rem; letter-spacing: 0.15em; text-transform: uppercase; margin: 0; }
 .score-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.6rem 0.8rem;
-    border-radius: 8px;
-    margin-bottom: 0.4rem;
-    background: #f8f7f5;
-    font-family: 'Barlow Condensed', sans-serif;
-    font-size: 1rem;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.6rem 0.8rem; border-radius: 8px; margin-bottom: 0.4rem;
+    background: #f8f7f5; font-family: 'Barlow Condensed', sans-serif; font-size: 1rem;
 }
-.score-row:hover { background: #f0ede8; }
-.score-num { font-weight: 800; font-size: 1.1rem; color: #C8102E; }
-.score-num.npb { color: #003087; }
+.score-num-kbo { font-weight: 800; font-size: 1.1rem; color: #C8102E; }
+.score-num-npb { font-weight: 800; font-size: 1.1rem; color: #003087; }
 .team-name { font-weight: 700; font-size: 0.95rem; }
 .game-status { font-size: 0.72rem; color: #aaa; letter-spacing: 0.06em; text-transform: uppercase; }
-
-.stat-header {
-    font-family: 'Barlow Condensed', sans-serif;
-    font-size: 0.75rem;
-    font-weight: 800;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: #888;
-    padding: 0.3rem 0;
-    border-bottom: 2px solid #eee;
-    margin-bottom: 0.5rem;
-}
-
-.updated-tag {
-    font-size: 0.68rem;
-    color: #bbb;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-}
-
-[data-testid="stTabs"] [data-baseweb="tab"] {
-    font-family: 'Barlow Condensed', sans-serif;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    font-size: 0.95rem;
-}
+.updated-tag { font-size: 0.68rem; color: #bbb; letter-spacing: 0.06em; text-transform: uppercase; }
+.source-note { font-size: 0.72rem; color: #aaa; font-style: italic; margin-bottom: 0.5rem; }
 </style>
 """, unsafe_allow_html=True)
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
-KBO_LEAGUE_ID = "4830"
-NPB_LEAGUE_ID = "4831"
+# TheSportsDB — corrected IDs
+KBO_LEAGUE_ID  = "4830"   # Korean KBO League ✅
+NPB_LEAGUE_ID  = "4591"   # Nippon Baseball League ✅ (was 4831 = basketball!)
+
 TSDB_BASE = "https://www.thesportsdb.com/api/v1/json/123"
-BREF_BASE = "https://www.baseball-reference.com"
+
+# FanGraphs international leaderboard pages (full HTML, parseable)
+FG_KBO_BAT  = "https://www.fangraphs.com/leaders/international/kbo"
+FG_KBO_PIT  = "https://www.fangraphs.com/leaders/international/kbo?stats=pit"
+FG_NPB_BAT  = "https://www.fangraphs.com/leaders/international/npb"
+FG_NPB_PIT  = "https://www.fangraphs.com/leaders/international/npb?stats=pit"
+
+# Flashscore standings (more scrape-friendly than BBRef)
+FS_KBO_STANDINGS = "https://www.flashscoreusa.com/baseball/south-korea/kbo/standings/"
+FS_NPB_STANDINGS = "https://www.flashscoreusa.com/baseball/japan/npb/standings/"
 
 HEADERS = {
     "User-Agent": (
@@ -114,229 +66,190 @@ HEADERS = {
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
 }
 
-KBO_TEAMS = {
-    "Samsung Lions": "🦁", "Lotte Giants": "🦅", "Kia Tigers": "🐯",
-    "Doosan Bears": "🐻", "LG Twins": "⚡", "SSG Landers": "🚀",
-    "KT Wiz": "🧙", "NC Dinos": "🦕", "Hanwha Eagles": "🦅",
-    "Kiwoom Heroes": "⚔️",
-}
-NPB_TEAMS = {
-    "Yomiuri Giants": "🗼", "Hanshin Tigers": "🐯", "SoftBank Hawks": "🦅",
-    "Orix Buffaloes": "🐃", "Lotte Marines": "⚓", "Seibu Lions": "🦁",
-    "Yakult Swallows": "🐦", "DeNA BayStars": "⭐", "Hiroshima Carp": "🎏",
-    "Chunichi Dragons": "🐉", "Nippon-Ham Fighters": "🥊", "Rakuten Eagles": "🦅",
-}
+# ── HELPERS ───────────────────────────────────────────────────────────────────
+
+def clean_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop unnamed columns, all-NaN rows, and reset index."""
+    df = df.loc[:, ~df.columns.astype(str).str.contains(r'^Unnamed|^#$', regex=True)]
+    df = df.dropna(how="all")
+    # Drop rows that are just repeated headers (common in BBRef/FG scraped tables)
+    if "Name" in df.columns:
+        df = df[df["Name"] != "Name"]
+    df = df.reset_index(drop=True)
+    # Add 1-based rank column
+    df.insert(0, "#", range(1, len(df) + 1))
+    return df
+
+
+def safe_sort(df: pd.DataFrame, col: str, ascending: bool = False) -> pd.DataFrame:
+    if col in df.columns:
+        try:
+            df = df.copy()
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+            return df.sort_values(col, ascending=ascending).reset_index(drop=True)
+        except Exception:
+            pass
+    return df
+
+
+def render_df(df: pd.DataFrame, max_rows: int = 30):
+    if df is None or df.empty:
+        st.info("No data to display.")
+        return
+    st.dataframe(df.head(max_rows), use_container_width=True, hide_index=True)
+
+
+def fallback_links(league: str):
+    st.markdown("---")
+    st.markdown("**📊 View full stats directly on:**")
+    if league == "KBO":
+        c1, c2, c3 = st.columns(3)
+        c1.link_button("FanGraphs KBO", FG_KBO_BAT)
+        c2.link_button("FanGraphs KBO Pitching", FG_KBO_PIT)
+        c3.link_button("Official KBO Site", "https://eng.koreabaseball.com")
+    else:
+        c1, c2, c3 = st.columns(3)
+        c1.link_button("FanGraphs NPB", FG_NPB_BAT)
+        c2.link_button("FanGraphs NPB Pitching", FG_NPB_PIT)
+        c3.link_button("Official NPB Site", "https://npb.jp/eng/")
 
 # ── DATA FETCHING ──────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=300)  # Cache 5 minutes
-def fetch_tsdb_scores(league_id: str, mode: str = "past") -> list:
-    """Fetch recent or upcoming games from TheSportsDB."""
+@st.cache_data(ttl=300)
+def fetch_tsdb(league_id: str, mode: str = "past") -> list:
+    """TheSportsDB: recent results or upcoming games."""
     endpoint = "eventspastleague" if mode == "past" else "eventsnextleague"
     url = f"{TSDB_BASE}/{endpoint}.php?id={league_id}"
     try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
+        r = requests.get(url, headers=HEADERS, timeout=12)
         r.raise_for_status()
-        data = r.json()
-        return data.get("events") or []
+        return r.json().get("events") or []
     except Exception as e:
         return []
 
 
-@st.cache_data(ttl=300)
-def fetch_tsdb_day(date_str: str, league_id: str) -> list:
-    """Fetch games for a specific date."""
-    url = f"{TSDB_BASE}/eventsday.php?d={date_str}&l={league_id}"
+@st.cache_data(ttl=1800)
+def fetch_fg_table(url: str) -> pd.DataFrame | None:
+    """
+    Fetch a FanGraphs international leaderboard page and parse the stats table.
+    FanGraphs renders the table as plain HTML — pd.read_html works reliably.
+    """
     try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
+        r = requests.get(url, headers=HEADERS, timeout=20)
         r.raise_for_status()
-        data = r.json()
-        return data.get("events") or []
+        tables = pd.read_html(r.text)
+        if not tables:
+            return None
+        # The stats table is the largest one with a 'Name' column
+        for df in sorted(tables, key=len, reverse=True):
+            if "Name" in df.columns or "name" in [c.lower() for c in df.columns]:
+                return clean_df(df)
+        # Fallback: just use the biggest table
+        return clean_df(max(tables, key=len))
+    except Exception as e:
+        return None
+
+
+@st.cache_data(ttl=600)
+def fetch_standings_flashscore(league: str) -> pd.DataFrame | None:
+    """
+    Flashscore standings via JavaScript-rendered page.
+    Since Flashscore is JS-heavy, we fall back to a static Wikipedia scrape
+    which is reliably available and updated frequently during the season.
+    """
+    wiki_urls = {
+        "KBO":  "https://en.wikipedia.org/wiki/2026_KBO_League_season",
+        "NPB":  "https://en.wikipedia.org/wiki/2026_NPB_season",
+    }
+    url = wiki_urls.get(league, "")
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        r.raise_for_status()
+        tables = pd.read_html(r.text)
+        # Find the table most likely to be standings (has W, L, or Pct columns)
+        standing_keywords = {"w", "l", "pct", "gb", "win", "loss", "team", "club"}
+        best = None
+        best_score = 0
+        for df in tables:
+            cols_lower = {str(c).lower() for c in df.columns}
+            score = len(cols_lower & standing_keywords)
+            if score > best_score and len(df) >= 5:
+                best_score = score
+                best = df
+        if best is not None:
+            return clean_df(best)
+    except Exception as e:
+        pass
+    return None
+
+
+@st.cache_data(ttl=600)
+def fetch_npb_standings_detailed() -> dict[str, pd.DataFrame]:
+    """NPB has Central + Pacific leagues. Try Wikipedia for both."""
+    result = {}
+    url = "https://en.wikipedia.org/wiki/2026_NPB_season"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        r.raise_for_status()
+        tables = pd.read_html(r.text)
+        standing_keywords = {"w", "l", "pct", "gb", "team", "club"}
+        candidates = []
+        for df in tables:
+            cols_lower = {str(c).lower() for c in df.columns}
+            score = len(cols_lower & standing_keywords)
+            if score >= 3 and 5 <= len(df) <= 10:
+                candidates.append((score, df))
+        candidates.sort(key=lambda x: -x[0])
+        if len(candidates) >= 2:
+            result["Central League"] = clean_df(candidates[0][1])
+            result["Pacific League"] = clean_df(candidates[1][1])
+        elif len(candidates) == 1:
+            result["NPB Standings"] = clean_df(candidates[0][1])
     except Exception:
-        return []
+        pass
+    return result
 
+# ── SCORE RENDERING ───────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=1800)  # Cache 30 minutes for standings
-def fetch_bref_kbo_standings() -> pd.DataFrame | None:
-    """Scrape KBO standings from Baseball Reference."""
-    url = f"{BREF_BASE}/international/KOR/KBO-standings.shtml"
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-        table = soup.find("table", {"id": lambda x: x and "standings" in x.lower()})
-        if not table:
-            tables = soup.find_all("table")
-            table = tables[0] if tables else None
-        if table:
-            df = pd.read_html(str(table))[0]
-            return df
-    except Exception as e:
-        st.warning(f"Could not fetch BBRef standings: {e}")
-    return None
-
-
-@st.cache_data(ttl=1800)
-def fetch_bref_kbo_batting() -> pd.DataFrame | None:
-    """Scrape KBO batting leaders from Baseball Reference."""
-    url = f"{BREF_BASE}/international/KOR/KBO-batting.shtml"
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        r.raise_for_status()
-        tables = pd.read_html(r.text)
-        if tables:
-            df = tables[0]
-            # Clean up multi-level columns if present
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = [' '.join(c).strip() for c in df.columns]
-            return df
-    except Exception as e:
-        st.warning(f"Could not fetch BBRef batting: {e}")
-    return None
-
-
-@st.cache_data(ttl=1800)
-def fetch_bref_kbo_pitching() -> pd.DataFrame | None:
-    """Scrape KBO pitching leaders from Baseball Reference."""
-    url = f"{BREF_BASE}/international/KOR/KBO-pitching.shtml"
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        r.raise_for_status()
-        tables = pd.read_html(r.text)
-        if tables:
-            df = tables[0]
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = [' '.join(c).strip() for c in df.columns]
-            return df
-    except Exception as e:
-        st.warning(f"Could not fetch BBRef pitching: {e}")
-    return None
-
-
-@st.cache_data(ttl=1800)
-def fetch_bref_npb_standings() -> pd.DataFrame | None:
-    """Scrape NPB standings from Baseball Reference."""
-    url = f"{BREF_BASE}/international/JPN/NPB-standings.shtml"
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-        tables = pd.read_html(r.text)
-        if tables:
-            return tables[0]
-    except Exception as e:
-        st.warning(f"Could not fetch NPB standings: {e}")
-    return None
-
-
-@st.cache_data(ttl=1800)
-def fetch_fangraphs_kbo_batting() -> pd.DataFrame | None:
-    """Scrape KBO batting leaderboard from FanGraphs."""
-    url = "https://www.fangraphs.com/leaders/international/kbo"
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        r.raise_for_status()
-        tables = pd.read_html(r.text)
-        if tables:
-            # Find the main stats table (usually largest)
-            df = max(tables, key=len)
-            return df
-    except Exception as e:
-        st.warning(f"Could not fetch FanGraphs KBO batting: {e}")
-    return None
-
-
-@st.cache_data(ttl=1800)
-def fetch_fangraphs_npb_batting() -> pd.DataFrame | None:
-    """Scrape NPB batting leaderboard from FanGraphs."""
-    url = "https://www.fangraphs.com/leaders/international/npb"
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        r.raise_for_status()
-        tables = pd.read_html(r.text)
-        if tables:
-            df = max(tables, key=len)
-            return df
-    except Exception as e:
-        st.warning(f"Could not fetch FanGraphs NPB batting: {e}")
-    return None
-
-
-# ── UI HELPERS ────────────────────────────────────────────────────────────────
-
-def render_score_card(event: dict, league: str = "KBO"):
-    """Render a single game result as a styled card."""
-    home = event.get("strHomeTeam", "?")
-    away = event.get("strAwayTeam", "?")
-    hs = event.get("intHomeScore")
-    as_ = event.get("intAwayScore")
-    status = event.get("strStatus", "")
-    date = event.get("dateEvent", "")
-    color_class = "" if league == "KBO" else " npb"
-
-    if hs is not None and as_ is not None:
-        score_str = f'<span class="score-num{color_class}">{hs}</span> – <span class="score-num{color_class}">{as_}</span>'
-        status_display = f"FINAL · {date}"
-    else:
-        score_str = '<span class="game-status">UPCOMING</span>'
-        t = event.get("strTime", "")
-        status_display = f"{date} · {t[:5] if t else 'TBD'}"
-
-    teams = KBO_TEAMS if league == "KBO" else NPB_TEAMS
-    home_icon = teams.get(home, "⚾")
-    away_icon = teams.get(away, "⚾")
-
-    st.markdown(f"""
-    <div class="score-row">
-        <div>
-            <span class="team-name">{home_icon} {home}</span><br>
-            <span class="team-name">{away_icon} {away}</span>
-        </div>
-        <div style="text-align:right">
-            {score_str}<br>
-            <span class="game-status">{status_display}</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def render_dataframe(df: pd.DataFrame, max_rows: int = 20):
-    """Render a clean dataframe with Streamlit's native table."""
-    if df is None or df.empty:
-        st.info("No data available.")
+def render_scores(events: list, league: str):
+    color_cls = "score-num-kbo" if league == "KBO" else "score-num-npb"
+    if not events:
+        st.info("⚠️ No score data returned from TheSportsDB right now.")
+        fallback_links(league)
         return
-    # Drop unnamed columns
-    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-    # Drop separator rows (rows where all values are same or NaN-heavy)
-    df = df.dropna(how='all')
-    st.dataframe(
-        df.head(max_rows),
-        use_container_width=True,
-        hide_index=True,
-    )
+    for e in events[:8]:
+        home  = e.get("strHomeTeam", "?")
+        away  = e.get("strAwayTeam", "?")
+        hs    = e.get("intHomeScore")
+        as_   = e.get("intAwayScore")
+        date  = e.get("dateEvent", "")
+        time_ = e.get("strTime", "")
 
+        if hs is not None and as_ is not None:
+            score = f'<span class="{color_cls}">{hs} – {as_}</span>'
+            status = f"FINAL · {date}"
+        else:
+            score = '<span class="game-status">UPCOMING</span>'
+            status = f"{date}  {time_[:5] if time_ else 'TBD'}"
 
-def show_fallback_links(league: str):
-    """Show direct links to data sources as fallback."""
-    st.markdown("---")
-    st.markdown("**📊 View full stats directly:**")
-    if league == "KBO":
-        col1, col2, col3 = st.columns(3)
-        col1.link_button("FanGraphs KBO", "https://www.fangraphs.com/leaders/international/kbo")
-        col2.link_button("Baseball Reference KBO", "https://www.baseball-reference.com/international/KOR/")
-        col3.link_button("Official KBO Site", "https://eng.koreabaseball.com")
-    else:
-        col1, col2, col3 = st.columns(3)
-        col1.link_button("FanGraphs NPB", "https://www.fangraphs.com/leaders/international/npb")
-        col2.link_button("Baseball Reference NPB", "https://www.baseball-reference.com/international/JPN/")
-        col3.link_button("Official NPB Site", "https://npb.jp/eng/")
+        st.markdown(f"""
+        <div class="score-row">
+            <div>
+                <span class="team-name">{home}</span><br>
+                <span class="team-name">{away}</span>
+            </div>
+            <div style="text-align:right">
+                {score}<br>
+                <span class="game-status">{status}</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
+# ── HEADER ────────────────────────────────────────────────────────────────────
 
-# ── MAIN APP ──────────────────────────────────────────────────────────────────
-
-# Header
 st.markdown("""
 <div class="main-header">
     <div style="font-size:2.5rem">⚾</div>
@@ -347,208 +260,162 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Refresh button + last updated
-col_r1, col_r2 = st.columns([4, 1])
-with col_r2:
-    if st.button("🔄 Refresh All", use_container_width=True):
+col_info, col_btn = st.columns([5, 1])
+with col_info:
+    st.markdown(f'<span class="updated-tag">Loaded: {datetime.now().strftime("%b %d %Y %I:%M %p")}</span>', unsafe_allow_html=True)
+with col_btn:
+    if st.button("🔄 Refresh", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-
-with col_r1:
-    st.markdown(f'<span class="updated-tag">Last loaded: {datetime.now().strftime("%b %d, %Y %I:%M %p")}</span>',
-                unsafe_allow_html=True)
 
 st.markdown("---")
 
 # ── LEAGUE TABS ───────────────────────────────────────────────────────────────
-league_tab_kbo, league_tab_npb = st.tabs(["🇰🇷  KBO — Korea", "🇯🇵  NPB — Japan"])
+kbo_tab, npb_tab = st.tabs(["🇰🇷  KBO — Korea", "🇯🇵  NPB — Japan"])
 
 # ══════════════════════════════════════════════════════════════════════════════
-# KBO TAB
+# KBO
 # ══════════════════════════════════════════════════════════════════════════════
-with league_tab_kbo:
-    scores_tab, standings_tab, batting_tab, pitching_tab = st.tabs(
+with kbo_tab:
+    t_scores, t_stand, t_bat, t_pit = st.tabs(
         ["⚾ Scores", "🏆 Standings", "🥎 Batting Leaders", "💪 Pitching Leaders"]
     )
 
-    # ── KBO SCORES ──
-    with scores_tab:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown("### Recent Results")
+    with t_scores:
+        st.subheader("Recent Results")
+        st.markdown('<p class="source-note">Source: TheSportsDB · League ID 4830</p>', unsafe_allow_html=True)
+        past = fetch_tsdb(KBO_LEAGUE_ID, "past")
+        render_scores(past, "KBO")
+        st.subheader("Upcoming Games")
+        upcoming = fetch_tsdb(KBO_LEAGUE_ID, "next")
+        render_scores(upcoming, "KBO")
 
-        today = datetime.now()
-        past_events = fetch_tsdb_scores(KBO_LEAGUE_ID, "past")
-        upcoming_events = fetch_tsdb_scores(KBO_LEAGUE_ID, "next")
-
-        if past_events:
-            for e in past_events[:5]:
-                render_score_card(e, "KBO")
-        else:
-            st.info("⚠️ Score data unavailable from TheSportsDB right now.")
-            show_fallback_links("KBO")
-
-        st.markdown("### Upcoming Games")
-        if upcoming_events:
-            for e in upcoming_events[:5]:
-                render_score_card(e, "KBO")
-        else:
-            st.info("No upcoming game data available.")
-
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ── KBO STANDINGS ──
-    with standings_tab:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown("### 2026 KBO Standings")
-        st.caption("Source: Baseball Reference · Updated daily")
-
+    with t_stand:
+        st.subheader("2026 KBO Standings")
+        st.markdown('<p class="source-note">Source: Wikipedia 2026 KBO season · Updated throughout season</p>', unsafe_allow_html=True)
         with st.spinner("Loading standings..."):
-            df_standings = fetch_bref_kbo_standings()
-
-        if df_standings is not None:
-            render_dataframe(df_standings)
+            df_stand = fetch_standings_flashscore("KBO")
+        if df_stand is not None and not df_stand.empty:
+            render_df(df_stand)
         else:
-            st.warning("Could not load standings automatically.")
+            st.warning("Could not load standings table automatically.")
+        fallback_links("KBO")
 
-        show_fallback_links("KBO")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ── KBO BATTING ──
-    with batting_tab:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown("### 2026 KBO Batting Leaders")
-
-        source = st.radio("Data source:", ["FanGraphs", "Baseball Reference"],
-                          horizontal=True, key="kbo_bat_source")
-
-        with st.spinner("Loading batting stats..."):
-            if source == "FanGraphs":
-                df_bat = fetch_fangraphs_kbo_batting()
-            else:
-                df_bat = fetch_bref_kbo_batting()
-
-        if df_bat is not None:
-            # Filter controls
+    with t_bat:
+        st.subheader("2026 KBO Batting Leaders")
+        st.markdown('<p class="source-note">Source: FanGraphs · Updated nightly</p>', unsafe_allow_html=True)
+        with st.spinner("Loading KBO batting stats from FanGraphs..."):
+            df_bat = fetch_fg_table(FG_KBO_BAT)
+        if df_bat is not None and not df_bat.empty:
             col1, col2 = st.columns(2)
             with col1:
-                sort_col = st.selectbox("Sort by:", df_bat.columns.tolist()[:15], key="kbo_bat_sort")
+                stat_cols = [c for c in df_bat.columns if c not in ("#", "Name", "Team", "Age")]
+                sort_col = st.selectbox("Sort by:", stat_cols, index=stat_cols.index("AVG") if "AVG" in stat_cols else 0, key="kbo_bat_sort")
             with col2:
-                max_rows = st.slider("Rows to show:", 10, 50, 20, key="kbo_bat_rows")
-
-            df_sorted = df_bat.sort_values(sort_col, ascending=False).reset_index(drop=True) \
-                if sort_col in df_bat.columns else df_bat
-            render_dataframe(df_sorted, max_rows)
+                max_rows = st.slider("Rows:", 10, 100, 30, key="kbo_bat_rows")
+            df_sorted = safe_sort(df_bat, sort_col)
+            df_sorted.insert(0, "#", range(1, len(df_sorted) + 1))
+            render_df(df_sorted, max_rows)
         else:
-            st.warning("Could not load batting data automatically.")
+            st.warning("Could not load FanGraphs KBO batting data.")
+        fallback_links("KBO")
 
-        show_fallback_links("KBO")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ── KBO PITCHING ──
-    with pitching_tab:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown("### 2026 KBO Pitching Leaders")
-        st.caption("Source: Baseball Reference")
-
-        with st.spinner("Loading pitching stats..."):
-            df_pitch = fetch_bref_kbo_pitching()
-
-        if df_pitch is not None:
+    with t_pit:
+        st.subheader("2026 KBO Pitching Leaders")
+        st.markdown('<p class="source-note">Source: FanGraphs · Updated nightly</p>', unsafe_allow_html=True)
+        with st.spinner("Loading KBO pitching stats from FanGraphs..."):
+            df_pit = fetch_fg_table(FG_KBO_PIT)
+        if df_pit is not None and not df_pit.empty:
             col1, col2 = st.columns(2)
             with col1:
-                sort_col_p = st.selectbox("Sort by:", df_pitch.columns.tolist()[:15], key="kbo_pit_sort")
+                stat_cols_p = [c for c in df_pit.columns if c not in ("#", "Name", "Team", "Age")]
+                default_p = "ERA" if "ERA" in stat_cols_p else stat_cols_p[0] if stat_cols_p else None
+                sort_col_p = st.selectbox("Sort by:", stat_cols_p, index=stat_cols_p.index(default_p) if default_p in stat_cols_p else 0, key="kbo_pit_sort")
             with col2:
-                max_rows_p = st.slider("Rows to show:", 10, 50, 20, key="kbo_pit_rows")
-
-            asc = sort_col_p in ["ERA", "BB", "HR", "WHIP"]
-            df_sorted_p = df_pitch.sort_values(sort_col_p, ascending=asc).reset_index(drop=True) \
-                if sort_col_p in df_pitch.columns else df_pitch
-            render_dataframe(df_sorted_p, max_rows_p)
+                max_rows_p = st.slider("Rows:", 10, 100, 30, key="kbo_pit_rows")
+            low_is_better = sort_col_p in {"ERA", "WHIP", "BB", "BB9", "BB/9", "HR", "HR9"}
+            df_pit_sorted = safe_sort(df_pit, sort_col_p, ascending=low_is_better)
+            df_pit_sorted.insert(0, "#", range(1, len(df_pit_sorted) + 1))
+            render_df(df_pit_sorted, max_rows_p)
         else:
-            st.warning("Could not load pitching data automatically.")
-
-        show_fallback_links("KBO")
-        st.markdown('</div>', unsafe_allow_html=True)
-
+            st.warning("Could not load FanGraphs KBO pitching data.")
+        fallback_links("KBO")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NPB TAB
+# NPB
 # ══════════════════════════════════════════════════════════════════════════════
-with league_tab_npb:
-    npb_scores_tab, npb_standings_tab, npb_batting_tab = st.tabs(
-        ["⚾ Scores", "🏆 Standings", "🥎 Batting Leaders"]
+with npb_tab:
+    t_npb_scores, t_npb_stand, t_npb_bat, t_npb_pit = st.tabs(
+        ["⚾ Scores", "🏆 Standings", "🥎 Batting Leaders", "💪 Pitching Leaders"]
     )
 
-    # ── NPB SCORES ──
-    with npb_scores_tab:
-        st.markdown('<div class="section-card npb">', unsafe_allow_html=True)
-        st.markdown("### Recent Results")
+    with t_npb_scores:
+        st.subheader("Recent Results")
+        st.markdown('<p class="source-note">Source: TheSportsDB · League ID 4591 (Nippon Baseball League) ✅</p>', unsafe_allow_html=True)
+        past_npb = fetch_tsdb(NPB_LEAGUE_ID, "past")
+        render_scores(past_npb, "NPB")
+        st.subheader("Upcoming Games")
+        upcoming_npb = fetch_tsdb(NPB_LEAGUE_ID, "next")
+        render_scores(upcoming_npb, "NPB")
 
-        past_npb = fetch_tsdb_scores(NPB_LEAGUE_ID, "past")
-        upcoming_npb = fetch_tsdb_scores(NPB_LEAGUE_ID, "next")
-
-        if past_npb:
-            for e in past_npb[:5]:
-                render_score_card(e, "NPB")
-        else:
-            st.info("⚠️ NPB score data unavailable right now.")
-            show_fallback_links("NPB")
-
-        st.markdown("### Upcoming Games")
-        if upcoming_npb:
-            for e in upcoming_npb[:5]:
-                render_score_card(e, "NPB")
-        else:
-            st.info("No upcoming game data available.")
-
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ── NPB STANDINGS ──
-    with npb_standings_tab:
-        st.markdown('<div class="section-card npb">', unsafe_allow_html=True)
-        st.markdown("### 2026 NPB Standings")
-        st.caption("Source: Baseball Reference · Updated daily")
-
+    with t_npb_stand:
+        st.subheader("2026 NPB Standings")
+        st.markdown('<p class="source-note">Source: Wikipedia 2026 NPB season · Central & Pacific leagues</p>', unsafe_allow_html=True)
         with st.spinner("Loading NPB standings..."):
-            df_npb_stand = fetch_bref_npb_standings()
-
-        if df_npb_stand is not None:
-            render_dataframe(df_npb_stand)
+            npb_stands = fetch_npb_standings_detailed()
+        if npb_stands:
+            for league_name, df_s in npb_stands.items():
+                st.markdown(f"**{league_name}**")
+                render_df(df_s)
         else:
             st.warning("Could not load NPB standings automatically.")
+            st.info("NPB Wikipedia page may use a different URL format mid-season. Try the direct links below.")
+        fallback_links("NPB")
 
-        show_fallback_links("NPB")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ── NPB BATTING ──
-    with npb_batting_tab:
-        st.markdown('<div class="section-card npb">', unsafe_allow_html=True)
-        st.markdown("### 2026 NPB Batting Leaders")
-        st.caption("Source: FanGraphs · Updated nightly")
-
-        with st.spinner("Loading NPB batting stats..."):
-            df_npb_bat = fetch_fangraphs_npb_batting()
-
-        if df_npb_bat is not None:
+    with t_npb_bat:
+        st.subheader("2026 NPB Batting Leaders")
+        st.markdown('<p class="source-note">Source: FanGraphs · Updated nightly</p>', unsafe_allow_html=True)
+        with st.spinner("Loading NPB batting stats from FanGraphs..."):
+            df_npb_bat = fetch_fg_table(FG_NPB_BAT)
+        if df_npb_bat is not None and not df_npb_bat.empty:
             col1, col2 = st.columns(2)
             with col1:
-                sort_npb = st.selectbox("Sort by:", df_npb_bat.columns.tolist()[:15], key="npb_bat_sort")
+                stat_cols_nb = [c for c in df_npb_bat.columns if c not in ("#", "Name", "Team", "Age")]
+                default_nb = "AVG" if "AVG" in stat_cols_nb else stat_cols_nb[0] if stat_cols_nb else None
+                sort_nb = st.selectbox("Sort by:", stat_cols_nb, index=stat_cols_nb.index(default_nb) if default_nb in stat_cols_nb else 0, key="npb_bat_sort")
             with col2:
-                rows_npb = st.slider("Rows to show:", 10, 50, 20, key="npb_bat_rows")
-
-            df_npb_sorted = df_npb_bat.sort_values(sort_npb, ascending=False).reset_index(drop=True) \
-                if sort_npb in df_npb_bat.columns else df_npb_bat
-            render_dataframe(df_npb_sorted, rows_npb)
+                rows_nb = st.slider("Rows:", 10, 100, 30, key="npb_bat_rows")
+            df_npb_bat_s = safe_sort(df_npb_bat, sort_nb)
+            df_npb_bat_s.insert(0, "#", range(1, len(df_npb_bat_s) + 1))
+            render_df(df_npb_bat_s, rows_nb)
         else:
-            st.warning("Could not load NPB batting data automatically.")
+            st.warning("Could not load FanGraphs NPB batting data.")
+        fallback_links("NPB")
 
-        show_fallback_links("NPB")
-        st.markdown('</div>', unsafe_allow_html=True)
+    with t_npb_pit:
+        st.subheader("2026 NPB Pitching Leaders")
+        st.markdown('<p class="source-note">Source: FanGraphs · Updated nightly</p>', unsafe_allow_html=True)
+        with st.spinner("Loading NPB pitching stats from FanGraphs..."):
+            df_npb_pit = fetch_fg_table(FG_NPB_PIT)
+        if df_npb_pit is not None and not df_npb_pit.empty:
+            col1, col2 = st.columns(2)
+            with col1:
+                stat_cols_np = [c for c in df_npb_pit.columns if c not in ("#", "Name", "Team", "Age")]
+                default_np = "ERA" if "ERA" in stat_cols_np else stat_cols_np[0] if stat_cols_np else None
+                sort_np = st.selectbox("Sort by:", stat_cols_np, index=stat_cols_np.index(default_np) if default_np in stat_cols_np else 0, key="npb_pit_sort")
+            with col2:
+                rows_np = st.slider("Rows:", 10, 100, 30, key="npb_pit_rows")
+            low_np = sort_np in {"ERA", "WHIP", "BB", "BB9", "BB/9", "HR", "HR9"}
+            df_npb_pit_s = safe_sort(df_npb_pit, sort_np, ascending=low_np)
+            df_npb_pit_s.insert(0, "#", range(1, len(df_npb_pit_s) + 1))
+            render_df(df_npb_pit_s, rows_np)
+        else:
+            st.warning("Could not load FanGraphs NPB pitching data.")
+        fallback_links("NPB")
 
 # ── FOOTER ────────────────────────────────────────────────────────────────────
 st.markdown("---")
 st.markdown(
-    '<span class="updated-tag">Data sources: TheSportsDB · Baseball Reference · FanGraphs · '
-    'Scores cache: 5min · Stats cache: 30min</span>',
-    unsafe_allow_html=True
+    '<span class="updated-tag">Sources: TheSportsDB (scores) · FanGraphs (batting/pitching) · Wikipedia (standings) · Scores cache 5min · Stats cache 30min</span>',
+    unsafe_allow_html=True,
 )
