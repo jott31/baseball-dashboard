@@ -343,8 +343,8 @@ let isLoading = false;
 function getKey() { return localStorage.getItem('gemini_api_key') || ''; }
 function saveKey() {
   const val = document.getElementById('api-key-input').value.trim();
-  if (!val || !val.startsWith('AIza')) {
-    alert('That doesn\'t look like a valid Gemini API key. It should start with "AIza".');
+  if (!val || val.length < 10) {
+    alert('Please paste your Gemini API key first.');
     return;
   }
   localStorage.setItem('gemini_api_key', val);
