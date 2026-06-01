@@ -13,22 +13,14 @@
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    --kbo: #C8102E;
-    --npb: #003087;
-    --both: #1a1a2e;
     --active: #C8102E;
     --bg: #f0ede8;
     --card: #ffffff;
     --text: #1a1a1a;
-    --muted: #888;
     --safe-top: env(safe-area-inset-top, 0px);
     --safe-bottom: env(safe-area-inset-bottom, 0px);
   }
-  html, body {
-    height: 100%;
-    overscroll-behavior: none;
-    -webkit-text-size-adjust: 100%;
-  }
+  html, body { height: 100%; overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
   body {
     font-family: 'Barlow', sans-serif;
     background: var(--bg);
@@ -40,340 +32,297 @@
     min-height: 100vh;
     min-height: -webkit-fill-available;
   }
-  /* ── HEADER ── */
+
+  /* SETUP SCREEN */
+  #setup-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 2rem 1.5rem;
+    text-align: center;
+  }
+  #setup-ball { font-size: 3.5rem; margin-bottom: 1rem; animation: float 3s ease-in-out infinite; }
+  #setup-title {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 1.6rem; font-weight: 900;
+    letter-spacing: 0.06em; color: #1a1a1a;
+    margin-bottom: 0.3rem;
+  }
+  #setup-sub { font-size: 0.82rem; color: #888; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 2rem; }
+  #setup-card {
+    background: #fff; border-radius: 16px;
+    padding: 1.4rem; width: 100%;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    margin-bottom: 1rem;
+  }
+  #setup-card h3 {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 0.8rem; font-weight: 800;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--active); margin-bottom: 1rem;
+  }
+  .setup-step {
+    display: flex; gap: 0.75rem; align-items: flex-start;
+    margin-bottom: 0.9rem; text-align: left;
+  }
+  .setup-num {
+    background: var(--active); color: #fff;
+    border-radius: 50%; width: 22px; height: 22px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 0.75rem; font-weight: 800; flex-shrink: 0; margin-top: 1px;
+  }
+  .setup-step p { font-size: 0.82rem; line-height: 1.55; color: #444; }
+  .setup-step a { color: var(--active); font-weight: 600; text-decoration: none; }
+  #api-input-wrap { position: relative; margin-top: 1rem; }
+  #api-key-input {
+    width: 100%; padding: 0.75rem 2.8rem 0.75rem 0.9rem;
+    border: 2px solid #e0ddd8; border-radius: 10px;
+    font-family: 'Barlow', sans-serif; font-size: 0.85rem;
+    color: #1a1a1a; background: #faf9f7;
+    outline: none; transition: border-color 0.2s;
+    -webkit-appearance: none;
+  }
+  #api-key-input:focus { border-color: var(--active); }
+  #api-key-input::placeholder { color: #bbb; }
+  #toggle-key {
+    position: absolute; right: 0.75rem; top: 50%;
+    transform: translateY(-50%);
+    background: none; border: none; cursor: pointer;
+    font-size: 1rem; color: #aaa; padding: 0.25rem;
+  }
+  #save-btn {
+    width: 100%; margin-top: 0.75rem;
+    background: var(--active); color: #fff; border: none;
+    border-radius: 10px; padding: 0.85rem;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 0.9rem; font-weight: 800; letter-spacing: 0.08em;
+    cursor: pointer; transition: opacity 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #save-btn:active { opacity: 0.85; }
+  #setup-note { font-size: 0.72rem; color: #bbb; line-height: 1.5; max-width: 280px; }
+
+  /* DASHBOARD */
+  #dashboard { display: none; flex-direction: column; flex: 1; }
+
+  /* HEADER */
   #header {
     background: var(--active);
     padding: calc(var(--safe-top) + 0.9rem) 1rem 0;
-    position: sticky;
-    top: 0;
-    z-index: 100;
-    box-shadow: 0 2px 16px rgba(0,0,0,0.3);
+    position: sticky; top: 0; z-index: 100;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.25);
     transition: background 0.3s;
   }
   #header-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 0.75rem;
+    display: flex; align-items: center;
+    justify-content: space-between; margin-bottom: 0.75rem;
   }
-  #logo {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-  }
-  #logo-flag { font-size: 1.6rem; line-height: 1; transition: all 0.3s; }
-  #logo-text { line-height: 1.1; }
+  #logo { display: flex; align-items: center; gap: 0.6rem; }
+  #logo-flag { font-size: 1.6rem; line-height: 1; }
   #logo-title {
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 1.35rem;
-    font-weight: 900;
-    color: #fff;
-    letter-spacing: 0.04em;
+    font-size: 1.35rem; font-weight: 900;
+    color: #fff; letter-spacing: 0.04em; line-height: 1;
   }
-  #logo-sub {
-    font-size: 0.6rem;
-    color: rgba(255,255,255,0.65);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-  }
-  #refresh-btn {
+  #logo-sub { font-size: 0.6rem; color: rgba(255,255,255,0.65); letter-spacing: 0.14em; text-transform: uppercase; }
+  #header-actions { display: flex; gap: 0.4rem; align-items: center; }
+  .hdr-btn {
     background: rgba(255,255,255,0.15);
     border: 1px solid rgba(255,255,255,0.3);
-    color: #fff;
-    border-radius: 8px;
-    padding: 0.42rem 0.85rem;
+    color: #fff; border-radius: 8px;
+    padding: 0.42rem 0.75rem;
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.07em;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em;
+    cursor: pointer; display: flex; align-items: center; gap: 0.25rem;
     -webkit-tap-highlight-color: transparent;
-    transition: background 0.15s;
   }
-  #refresh-btn:active { background: rgba(255,255,255,0.28); }
-  #refresh-icon { display: inline-block; transition: transform 0.3s; }
+  #refresh-icon { display: inline-block; }
   #refresh-icon.spinning { animation: spin 0.8s linear infinite; }
-  /* ── LEAGUE TABS ── */
-  #league-tabs {
-    display: flex;
-    gap: 0.35rem;
-  }
+  #league-tabs { display: flex; gap: 0.35rem; }
   .league-tab {
-    flex: 1;
-    padding: 0.55rem 0.3rem;
+    flex: 1; padding: 0.55rem 0.3rem;
     background: rgba(255,255,255,0.15);
     color: rgba(255,255,255,0.8);
-    border: none;
-    border-radius: 7px 7px 0 0;
+    border: none; border-radius: 7px 7px 0 0;
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 0.8rem;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    cursor: pointer;
-    transition: all 0.15s;
+    font-size: 0.8rem; font-weight: 700; letter-spacing: 0.05em;
+    cursor: pointer; transition: all 0.15s;
     -webkit-tap-highlight-color: transparent;
   }
-  .league-tab.active {
-    background: var(--bg);
-    color: var(--active);
-  }
-  /* ── SECTION TABS ── */
+  .league-tab.active { background: var(--bg); color: var(--active); }
+
+  /* SECTION TABS */
   #section-tabs {
-    background: var(--card);
-    border-bottom: 2px solid #e8e4de;
-    padding: 0.5rem 0.6rem;
-    display: flex;
-    gap: 0.35rem;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
+    background: var(--card); border-bottom: 2px solid #e8e4de;
+    padding: 0.5rem 0.6rem; display: flex; gap: 0.35rem;
+    overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
   }
   #section-tabs::-webkit-scrollbar { display: none; }
   .section-tab {
-    flex-shrink: 0;
-    padding: 0.45rem 0.8rem;
-    background: transparent;
-    color: #777;
-    border: 1.5px solid #ddd;
-    border-radius: 20px;
+    flex-shrink: 0; padding: 0.45rem 0.8rem;
+    background: transparent; color: #777;
+    border: 1.5px solid #ddd; border-radius: 20px;
     font-family: 'Barlow Condensed', sans-serif;
-    font-size: 0.76rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: all 0.15s;
+    font-size: 0.76rem; font-weight: 700; letter-spacing: 0.04em;
+    cursor: pointer; white-space: nowrap; transition: all 0.15s;
     -webkit-tap-highlight-color: transparent;
   }
-  .section-tab.active {
-    background: var(--active);
-    color: #fff;
-    border-color: var(--active);
-  }
-  /* ── CONTENT ── */
+  .section-tab.active { background: var(--active); color: #fff; border-color: var(--active); }
+
+  /* CONTENT */
   #content {
-    flex: 1;
-    padding: 0.9rem;
-    overflow-y: auto;
+    flex: 1; padding: 0.9rem; overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     padding-bottom: calc(var(--safe-bottom) + 1rem);
   }
-  /* ── EMPTY STATE ── */
-  #empty-state {
-    text-align: center;
-    padding: 3.5rem 1rem;
-  }
-  #empty-ball {
-    font-size: 3.5rem;
-    margin-bottom: 1rem;
-    animation: float 3s ease-in-out infinite;
-  }
-  #empty-title {
-    font-family: 'Barlow Condensed', sans-serif;
-    font-size: 1.15rem;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    color: #555;
-    margin-bottom: 0.5rem;
-  }
-  #empty-sub {
-    font-size: 0.85rem;
-    color: #aaa;
-    max-width: 230px;
-    margin: 0 auto 1.5rem;
-    line-height: 1.5;
-  }
+  #empty-state { text-align: center; padding: 3.5rem 1rem; }
+  #empty-ball { font-size: 3.5rem; margin-bottom: 1rem; animation: float 3s ease-in-out infinite; }
+  #empty-title { font-family: 'Barlow Condensed', sans-serif; font-size: 1.1rem; font-weight: 800; letter-spacing: 0.08em; color: #555; margin-bottom: 0.5rem; }
+  #empty-sub { font-size: 0.82rem; color: #aaa; max-width: 230px; margin: 0 auto 1.5rem; line-height: 1.5; }
   #load-btn {
-    display: inline-block;
-    background: var(--active);
-    color: #fff;
-    border: none;
-    border-radius: 10px;
-    padding: 0.8rem 2.2rem;
-    font-family: 'Barlow Condensed', sans-serif;
-    font-size: 0.88rem;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    cursor: pointer;
+    display: inline-block; background: var(--active); color: #fff;
+    border: none; border-radius: 10px; padding: 0.8rem 2.2rem;
+    font-family: 'Barlow Condensed', sans-serif; font-size: 0.88rem;
+    font-weight: 800; letter-spacing: 0.08em; cursor: pointer;
     -webkit-tap-highlight-color: transparent;
-    transition: transform 0.1s, opacity 0.1s;
   }
-  #load-btn:active { transform: scale(0.97); opacity: 0.9; }
-  /* ── LOADING ── */
-  #loading-state {
-    display: none;
-    text-align: center;
-    padding: 3.5rem 1rem;
-  }
-  #loading-ball {
-    font-size: 2.5rem;
-    margin-bottom: 1rem;
-    animation: bounce 0.75s ease-in-out infinite;
-  }
-  #loading-title {
-    font-family: 'Barlow Condensed', sans-serif;
-    font-size: 0.95rem;
-    letter-spacing: 0.1em;
-    color: #888;
-    margin-bottom: 0.4rem;
-  }
+  #loading-state { display: none; text-align: center; padding: 3.5rem 1rem; }
+  #loading-ball { font-size: 2.5rem; margin-bottom: 1rem; animation: bounce 0.75s ease-in-out infinite; }
+  #loading-title { font-family: 'Barlow Condensed', sans-serif; font-size: 0.95rem; letter-spacing: 0.1em; color: #888; margin-bottom: 0.4rem; }
   #loading-sub { font-size: 0.75rem; color: #bbb; letter-spacing: 0.04em; }
-  /* ── RESULT ── */
   #result-state { display: none; }
   #result-header {
-    background: var(--card);
-    border-radius: 12px;
-    padding: 0.85rem 1rem;
-    margin-bottom: 0.7rem;
+    background: var(--card); border-radius: 12px;
+    padding: 0.85rem 1rem; margin-bottom: 0.7rem;
     border-left: 4px solid var(--active);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    display: flex; align-items: center; justify-content: space-between;
   }
-  #result-label {
-    font-family: 'Barlow Condensed', sans-serif;
-    font-size: 0.95rem;
-    font-weight: 800;
-    color: var(--active);
-    letter-spacing: 0.06em;
-  }
+  #result-label { font-family: 'Barlow Condensed', sans-serif; font-size: 0.95rem; font-weight: 800; color: var(--active); letter-spacing: 0.06em; }
   #result-time { font-size: 0.68rem; color: #bbb; margin-top: 0.15rem; }
   #result-flag { font-size: 1.6rem; }
-  #result-body {
-    background: var(--card);
-    border-radius: 12px;
-    padding: 1rem 1rem 1.2rem;
-  }
-  /* ── TEXT FORMATTING ── */
+  #result-body { background: var(--card); border-radius: 12px; padding: 1rem 1rem 1.2rem; }
   .result-section-header {
-    font-family: 'Barlow Condensed', sans-serif;
-    font-size: 0.82rem;
-    font-weight: 800;
-    letter-spacing: 0.09em;
-    text-transform: uppercase;
-    color: var(--active);
-    margin-top: 1.1rem;
-    margin-bottom: 0.35rem;
-    border-bottom: 1px solid;
-    border-color: color-mix(in srgb, var(--active) 25%, transparent);
+    font-family: 'Barlow Condensed', sans-serif; font-size: 0.82rem;
+    font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--active); margin-top: 1.1rem; margin-bottom: 0.35rem;
+    border-bottom: 1px solid; border-color: color-mix(in srgb, var(--active) 25%, transparent);
     padding-bottom: 0.2rem;
   }
   .result-section-header:first-child { margin-top: 0; }
-  .result-bullet {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 0.35rem;
-    align-items: flex-start;
-  }
+  .result-bullet { display: flex; gap: 0.5rem; margin-bottom: 0.35rem; align-items: flex-start; }
   .result-bullet-arrow { color: var(--active); flex-shrink: 0; font-size: 0.8rem; margin-top: 0.18rem; }
   .result-bullet-text { font-size: 0.875rem; line-height: 1.55; color: #2d2d2d; }
   .result-para { font-size: 0.875rem; line-height: 1.6; color: #2d2d2d; margin-bottom: 0.2rem; }
   .result-spacer { height: 0.4rem; }
-  #result-footer {
-    text-align: center;
-    padding: 0.9rem 0 0.2rem;
-    font-size: 0.68rem;
-    color: #ccc;
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
-  }
-  /* ── ERROR ── */
+  #result-footer { text-align: center; padding: 0.9rem 0 0.2rem; font-size: 0.68rem; color: #ccc; letter-spacing: 0.07em; text-transform: uppercase; }
   #error-state {
-    display: none;
-    background: #fff0f0;
-    border: 1px solid #ffcccc;
-    border-radius: 12px;
-    padding: 1rem;
-    color: #cc3333;
-    font-size: 0.85rem;
-    line-height: 1.5;
+    display: none; background: #fff0f0; border: 1px solid #ffcccc;
+    border-radius: 12px; padding: 1rem; color: #cc3333; font-size: 0.85rem; line-height: 1.5;
   }
-  #error-retry {
-    display: inline-block;
-    margin-top: 0.6rem;
-    color: var(--active);
-    background: none;
-    border: none;
-    font-weight: 700;
-    font-family: 'Barlow Condensed', sans-serif;
-    font-size: 0.88rem;
-    letter-spacing: 0.05em;
-    cursor: pointer;
-  }
-  /* ── ANIMATIONS ── */
+  #error-retry { display: inline-block; margin-top: 0.6rem; color: var(--active); background: none; border: none; font-weight: 700; font-family: 'Barlow Condensed', sans-serif; font-size: 0.88rem; letter-spacing: 0.05em; cursor: pointer; }
+
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
   @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
   .fade-in { animation: fadeIn 0.35s ease both; }
+  ::-webkit-scrollbar { display: none; }
 </style>
 </head>
 <body>
 
-<!-- HEADER -->
-<div id="header">
-  <div id="header-top">
-    <div id="logo">
-      <span id="logo-flag">🇰🇷</span>
-      <div id="logo-text">
-        <div id="logo-title">ASIA BASEBALL</div>
-        <div id="logo-sub">KBO · NPB · Daily Dashboard</div>
-      </div>
+<!-- SETUP SCREEN -->
+<div id="setup-screen">
+  <div id="setup-ball">⚾</div>
+  <div id="setup-title">ASIA BASEBALL</div>
+  <div id="setup-sub">KBO · NPB · Daily Dashboard</div>
+
+  <div id="setup-card">
+    <h3>One-time setup — get your free API key</h3>
+    <div class="setup-step">
+      <div class="setup-num">1</div>
+      <p>Go to <a href="https://aistudio.google.com" target="_blank">aistudio.google.com</a> and sign in with your Google account</p>
     </div>
-    <button id="refresh-btn" onclick="handleRefresh()">
-      <span id="refresh-icon">↻</span>
-      <span id="refresh-label">REFRESH</span>
-    </button>
+    <div class="setup-step">
+      <div class="setup-num">2</div>
+      <p>Tap <strong>Get API key</strong> → <strong>Create API key</strong> → copy it</p>
+    </div>
+    <div class="setup-step">
+      <div class="setup-num">3</div>
+      <p>Paste your key below — it's saved only on your device</p>
+    </div>
+    <div id="api-input-wrap">
+      <input id="api-key-input" type="password" placeholder="Paste your Gemini API key here…" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+      <button id="toggle-key" onclick="toggleKeyVisibility()" type="button">👁</button>
+    </div>
+    <button id="save-btn" onclick="saveKey()">SAVE & OPEN DASHBOARD →</button>
   </div>
-  <div id="league-tabs">
-    <button class="league-tab active" data-league="KBO" onclick="setLeague('KBO')">🇰🇷 KBO</button>
-    <button class="league-tab" data-league="NPB" onclick="setLeague('NPB')">🇯🇵 NPB</button>
-    <button class="league-tab" data-league="Both" onclick="setLeague('Both')">🌏 BOTH</button>
-  </div>
+  <p id="setup-note">Your key is stored in your browser only (localStorage) and never sent anywhere except Google's API directly.</p>
 </div>
 
-<!-- SECTION TABS -->
-<div id="section-tabs">
-  <button class="section-tab active" data-section="Scores" onclick="setSection('Scores')">⚾ SCORES</button>
-  <button class="section-tab" data-section="Standings" onclick="setSection('Standings')">🏆 STANDINGS</button>
-  <button class="section-tab" data-section="Top Performers" onclick="setSection('Top Performers')">⭐ TOP PERFORMERS</button>
-  <button class="section-tab" data-section="News & Buzz" onclick="setSection('News & Buzz')">📰 NEWS</button>
-</div>
-
-<!-- CONTENT -->
-<div id="content">
-  <div id="empty-state">
-    <div id="empty-ball">⚾</div>
-    <div id="empty-title">READY TO LOAD</div>
-    <p id="empty-sub">Tap below to fetch today's data — translated from Korean & Japanese</p>
-    <button id="load-btn" onclick="fetchData(false)">LOAD DATA →</button>
-  </div>
-
-  <div id="loading-state">
-    <div id="loading-ball">⚾</div>
-    <div id="loading-title">SEARCHING LATEST DATA...</div>
-    <div id="loading-sub">Translating from Korean &amp; Japanese</div>
-  </div>
-
-  <div id="result-state">
-    <div id="result-header">
-      <div>
-        <div id="result-label"></div>
-        <div id="result-time"></div>
+<!-- DASHBOARD -->
+<div id="dashboard">
+  <div id="header">
+    <div id="header-top">
+      <div id="logo">
+        <span id="logo-flag">🇰🇷</span>
+        <div>
+          <div id="logo-title">ASIA BASEBALL</div>
+          <div id="logo-sub">KBO · NPB · Daily Dashboard</div>
+        </div>
       </div>
-      <div id="result-flag"></div>
+      <div id="header-actions">
+        <button class="hdr-btn" onclick="handleRefresh()">
+          <span id="refresh-icon">↻</span>
+          <span id="refresh-label">REFRESH</span>
+        </button>
+        <button class="hdr-btn" onclick="changeKey()" title="Change API key">⚙</button>
+      </div>
     </div>
-    <div id="result-body"></div>
-    <div id="result-footer">DATA VIA WEB SEARCH · TRANSLATED BY AI</div>
+    <div id="league-tabs">
+      <button class="league-tab active" data-league="KBO" onclick="setLeague('KBO')">🇰🇷 KBO</button>
+      <button class="league-tab" data-league="NPB" onclick="setLeague('NPB')">🇯🇵 NPB</button>
+      <button class="league-tab" data-league="Both" onclick="setLeague('Both')">🌏 BOTH</button>
+    </div>
   </div>
 
-  <div id="error-state">
-    <strong>Error loading data.</strong> <span id="error-msg"></span>
-    <br>
-    <button id="error-retry" onclick="fetchData(true)">Try again →</button>
+  <div id="section-tabs">
+    <button class="section-tab active" data-section="Scores" onclick="setSection('Scores')">⚾ SCORES</button>
+    <button class="section-tab" data-section="Standings" onclick="setSection('Standings')">🏆 STANDINGS</button>
+    <button class="section-tab" data-section="Top Performers" onclick="setSection('Top Performers')">⭐ TOP PERFORMERS</button>
+    <button class="section-tab" data-section="News & Buzz" onclick="setSection('News & Buzz')">📰 NEWS</button>
+  </div>
+
+  <div id="content">
+    <div id="empty-state">
+      <div id="empty-ball">⚾</div>
+      <div id="empty-title">READY TO LOAD</div>
+      <p id="empty-sub">Tap below to fetch today's data — translated from Korean & Japanese</p>
+      <button id="load-btn" onclick="fetchData(false)">LOAD DATA →</button>
+    </div>
+    <div id="loading-state">
+      <div id="loading-ball">⚾</div>
+      <div id="loading-title">SEARCHING LATEST DATA...</div>
+      <div id="loading-sub">Translating from Korean &amp; Japanese</div>
+    </div>
+    <div id="result-state">
+      <div id="result-header">
+        <div>
+          <div id="result-label"></div>
+          <div id="result-time"></div>
+        </div>
+        <div id="result-flag"></div>
+      </div>
+      <div id="result-body"></div>
+      <div id="result-footer">DATA VIA GOOGLE SEARCH · TRANSLATED BY GEMINI</div>
+    </div>
+    <div id="error-state">
+      <strong>Error loading data.</strong> <span id="error-msg"></span>
+      <br><button id="error-retry" onclick="fetchData(true)">Try again →</button>
+    </div>
   </div>
 </div>
 
@@ -383,73 +332,128 @@ const LEAGUE_CONFIG = {
   NPB:  { flag: '🇯🇵', color: '#003087', label: 'NPB (Japan)' },
   Both: { flag: '🌏', color: '#1a1a2e', label: 'KBO + NPB' },
 };
-
-const SECTION_ICONS = {
-  'Scores': '⚾', 'Standings': '🏆', 'Top Performers': '⭐', 'News & Buzz': '📰'
-};
+const SECTION_ICONS = { 'Scores':'⚾','Standings':'🏆','Top Performers':'⭐','News & Buzz':'📰' };
 
 let activeLeague = 'KBO';
 let activeSection = 'Scores';
 let cache = {};
 let isLoading = false;
 
+// ── KEY MANAGEMENT ──
+function getKey() { return localStorage.getItem('gemini_api_key') || ''; }
+function saveKey() {
+  const val = document.getElementById('api-key-input').value.trim();
+  if (!val || !val.startsWith('AIza')) {
+    alert('That doesn\'t look like a valid Gemini API key. It should start with "AIza".');
+    return;
+  }
+  localStorage.setItem('gemini_api_key', val);
+  showDashboard();
+}
+function changeKey() {
+  localStorage.removeItem('gemini_api_key');
+  cache = {};
+  document.getElementById('api-key-input').value = '';
+  document.getElementById('dashboard').style.display = 'none';
+  document.getElementById('setup-screen').style.display = 'flex';
+}
+function toggleKeyVisibility() {
+  const input = document.getElementById('api-key-input');
+  input.type = input.type === 'password' ? 'text' : 'password';
+}
+function showDashboard() {
+  document.getElementById('setup-screen').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'flex';
+}
+
+// ── INIT ──
+window.addEventListener('DOMContentLoaded', () => {
+  if (getKey()) showDashboard();
+});
+
+// ── PROMPT ──
 function buildPrompt(league, section) {
   const leagueNames = league === 'Both'
     ? 'KBO (Korean Baseball Organization) and NPB (Nippon Professional Baseball)'
     : league === 'KBO' ? 'KBO (Korean Baseball Organization)' : 'NPB (Nippon Professional Baseball)';
   const dateStr = new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
   const prompts = {
-    'Scores': `Search for and provide today's (${dateStr}) game scores and results for ${leagueNames}. Include final scores, winning/losing pitchers, notable plays or walk-offs, and any games scheduled later today. Translate all team and player names to English. Format clearly with each game on its own line.`,
-    'Standings': `Search for the current standings for ${leagueNames} as of ${dateStr}. Include rank, team name (in English), wins, losses, games behind, and winning percentage. For NPB include both Central and Pacific leagues. Translate everything to English.`,
-    'Top Performers': `Search for the top statistical performers in ${leagueNames} as of ${dateStr}. Include batting average leaders, home run leaders, RBI leaders, ERA leaders, strikeout leaders, and wins leaders. Translate all player and team names to English. Note any record-breaking performances.`,
-    'News & Buzz': `Search for the latest news and notable stories from ${leagueNames} around ${dateStr}. Include injury updates, roster moves, trades, player milestones, managerial news, and fan buzz. Translate all names to English. Summarize 5-7 key stories.`,
+    'Scores': `Search for and provide today's (${dateStr}) game scores and results for ${leagueNames}. Include final scores, winning/losing pitchers, notable plays or walk-offs, and games scheduled later today. Translate all team and player names to English.`,
+    'Standings': `Search for the current standings for ${leagueNames} as of ${dateStr}. Include rank, team name in English, wins, losses, games behind, and winning percentage. For NPB show both Central and Pacific leagues.`,
+    'Top Performers': `Search for the top statistical performers in ${leagueNames} as of ${dateStr}. Cover batting average, home runs, RBI, ERA, strikeouts, and wins leaders. Translate all names to English. Highlight any record-breaking performances.`,
+    'News & Buzz': `Search for the latest news from ${leagueNames} around ${dateStr}. Cover injuries, roster moves, trades, milestones, and fan buzz. Translate all names to English. Give 5-7 key stories.`,
   };
-  return `You are an expert analyst covering Asian baseball leagues. ${prompts[section]}\n\nFORMATTING:\n- Translate all Korean/Japanese text to English\n- Romanize player names (e.g. "Ryu Hyun-jin")\n- Use **bold headers** for sections\n- Use bullet points starting with "- " for list items\n- Keep under 600 words for mobile readability\n- If exact today's data is unavailable, use most recent data and note the date`;
+  return `You are an expert analyst covering Asian baseball. ${prompts[section]}
+
+FORMAT RULES:
+- Translate all Korean/Japanese to English
+- Romanize player names (e.g. "Ryu Hyun-jin")
+- Use **bold text** for section headers
+- Use "- " bullet points for lists
+- Keep under 550 words for mobile reading
+- If today's exact data is unavailable, use the most recent data and note the date`;
 }
 
+// ── GEMINI API ──
+async function callGemini(prompt) {
+  const key = getKey();
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`;
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    tools: [{ google_search: {} }],
+    generationConfig: { maxOutputTokens: 1024, temperature: 0.3 }
+  };
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    const msg = err?.error?.message || `HTTP ${resp.status}`;
+    throw new Error(msg);
+  }
+  const data = await resp.json();
+  const text = data?.candidates?.[0]?.content?.parts
+    ?.filter(p => p.text)
+    ?.map(p => p.text)
+    ?.join('\n') || '';
+  if (!text) throw new Error('Empty response from Gemini');
+  return text;
+}
+
+// ── UI STATE ──
 function setLeague(league) {
   activeLeague = league;
   const cfg = LEAGUE_CONFIG[league];
   document.documentElement.style.setProperty('--active', cfg.color);
   document.getElementById('logo-flag').textContent = cfg.flag;
-  document.querySelectorAll('.league-tab').forEach(t => {
-    t.classList.toggle('active', t.dataset.league === league);
-  });
-  const cacheKey = league + '-' + activeSection;
-  if (cache[cacheKey]) showResult(cache[cacheKey]);
-  else showEmpty();
+  document.querySelectorAll('.league-tab').forEach(t => t.classList.toggle('active', t.dataset.league === league));
+  const key = league + '-' + activeSection;
+  cache[key] ? showResult(cache[key]) : showEmpty();
 }
-
 function setSection(section) {
   activeSection = section;
-  document.querySelectorAll('.section-tab').forEach(t => {
-    t.classList.toggle('active', t.dataset.section === section);
-  });
-  const cacheKey = activeLeague + '-' + section;
-  if (cache[cacheKey]) showResult(cache[cacheKey]);
-  else showEmpty();
+  document.querySelectorAll('.section-tab').forEach(t => t.classList.toggle('active', t.dataset.section === section));
+  const key = activeLeague + '-' + section;
+  cache[key] ? showResult(cache[key]) : showEmpty();
 }
-
 function showEmpty() {
   document.getElementById('empty-state').style.display = 'block';
   document.getElementById('loading-state').style.display = 'none';
   document.getElementById('result-state').style.display = 'none';
   document.getElementById('error-state').style.display = 'none';
 }
-
 function showLoading() {
   document.getElementById('empty-state').style.display = 'none';
   document.getElementById('loading-state').style.display = 'block';
   document.getElementById('result-state').style.display = 'none';
   document.getElementById('error-state').style.display = 'none';
 }
-
 function showResult(text) {
   const cfg = LEAGUE_CONFIG[activeLeague];
-  document.getElementById('result-label').textContent =
-    (SECTION_ICONS[activeSection] || '') + ' ' + activeSection.toUpperCase() + ' — ' + cfg.label.toUpperCase();
-  document.getElementById('result-time').textContent =
-    'Updated ' + new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  document.getElementById('result-label').textContent = (SECTION_ICONS[activeSection]||'') + ' ' + activeSection.toUpperCase() + ' — ' + cfg.label.toUpperCase();
+  document.getElementById('result-time').textContent = 'Updated ' + new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
   document.getElementById('result-flag').textContent = cfg.flag;
   document.getElementById('result-body').innerHTML = formatText(text);
   document.getElementById('empty-state').style.display = 'none';
@@ -458,7 +462,6 @@ function showResult(text) {
   document.getElementById('result-state').classList.add('fade-in');
   document.getElementById('error-state').style.display = 'none';
 }
-
 function showError(msg) {
   document.getElementById('empty-state').style.display = 'none';
   document.getElementById('loading-state').style.display = 'none';
@@ -466,62 +469,46 @@ function showError(msg) {
   document.getElementById('error-state').style.display = 'block';
   document.getElementById('error-msg').textContent = msg;
 }
-
 function formatText(text) {
   if (!text) return '';
-  const lines = text.split('\n');
   let html = '';
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) { html += '<div class="result-spacer"></div>'; continue; }
-    if (/^\*\*(.+)\*\*$/.test(trimmed)) {
-      html += `<div class="result-section-header">${trimmed.replace(/\*\*/g,'')}</div>`;
-    } else if (/^[-•]/.test(trimmed)) {
-      const content = trimmed.replace(/^[-•]\s*/,'').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');
-      html += `<div class="result-bullet"><span class="result-bullet-arrow">▸</span><span class="result-bullet-text">${content}</span></div>`;
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t) { html += '<div class="result-spacer"></div>'; continue; }
+    if (/^\*\*(.+)\*\*$/.test(t)) {
+      html += `<div class="result-section-header">${t.replace(/\*\*/g,'')}</div>`;
+    } else if (/^[-•]/.test(t)) {
+      const c = t.replace(/^[-•]\s*/,'').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');
+      html += `<div class="result-bullet"><span class="result-bullet-arrow">▸</span><span class="result-bullet-text">${c}</span></div>`;
     } else {
-      const content = trimmed.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');
-      html += `<p class="result-para">${content}</p>`;
+      const c = t.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');
+      html += `<p class="result-para">${c}</p>`;
     }
   }
   return html;
 }
 
+// ── FETCH ──
 async function fetchData(forceRefresh) {
   if (isLoading) return;
   const cacheKey = activeLeague + '-' + activeSection;
   if (!forceRefresh && cache[cacheKey]) { showResult(cache[cacheKey]); return; }
   isLoading = true;
   showLoading();
-  const icon = document.getElementById('refresh-icon');
-  const label = document.getElementById('refresh-label');
-  icon.classList.add('spinning');
-  label.textContent = 'LOADING';
+  document.getElementById('refresh-icon').classList.add('spinning');
+  document.getElementById('refresh-label').textContent = 'LOADING';
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        messages: [{ role: 'user', content: buildPrompt(activeLeague, activeSection) }],
-      }),
-    });
-    if (!resp.ok) throw new Error('API error ' + resp.status);
-    const data = await resp.json();
-    const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+    const text = await callGemini(buildPrompt(activeLeague, activeSection));
     cache[cacheKey] = text;
     showResult(text);
-  } catch (err) {
+  } catch(err) {
     showError(err.message);
   } finally {
     isLoading = false;
-    icon.classList.remove('spinning');
-    label.textContent = 'REFRESH';
+    document.getElementById('refresh-icon').classList.remove('spinning');
+    document.getElementById('refresh-label').textContent = 'REFRESH';
   }
 }
-
 function handleRefresh() { fetchData(true); }
 </script>
 </body>
