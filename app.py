@@ -392,20 +392,17 @@ def get_npb_schedule_from_day(date_str: str) -> list[dict]:
 # ══════════════════════════════════════════════════════════════════════════════
 # KBO SCRAPER  —  eng.koreabaseball.com (official KBO English site)
 #
-# Confirmed accessible and structured. URL:
-#   https://eng.koreabaseball.com/Schedule/Scoreboard.aspx
+# URL: https://eng.koreabaseball.com/Schedule/Scoreboard.aspx
+# Date param: ?searchDate=YYYY-MM-DD  (confirmed working for past dates)
 #
-# It's an ASP.NET site — date navigation uses __VIEWSTATE POST.
-# For past dates we POST with the date in the hidden field.
+# Confirmed structure for a COMPLETED game:
+#   Header text (between logo imgs): "LG 4 FINAL 1 HANWHA"
+#   Venue line: "DAEJEON 18:30 W: WILLIAM Tolhurst S: ..."
+#   Table row:  TEAMCODE | 1 | 0 | 1 | ... | - | R | H | E | B
 #
-# Confirmed page structure (from live fetch):
-#   Each game has: "TEAM1  TIME  TEAM2" header text + venue
-#   Then a linescore table: TEAM | 1 | 2 ... | R | H | E | B
-#   Rows with "-" = not yet played; rows with digits = completed
-#
-# Team names are short codes: KT, DOOSAN, LG, LOTTE, SAMSUNG, SSG,
-#   HANWHA, NC, KIA, KIWOOM
-# Full name map applied after scraping.
+# Confirmed structure for a SCHEDULED game:
+#   Header text: "LG 18:30 KT"
+#   Table row:   TEAMCODE | - | - | - | ... | (empty R/H/E/B)
 # ══════════════════════════════════════════════════════════════════════════════
 
 KBO_TEAM_NAMES = {
@@ -421,167 +418,163 @@ KBO_TEAM_NAMES = {
     "KIWOOM":  "Kiwoom Heroes",
 }
 
-def expand_kbo_name(short: str) -> str:
-    return KBO_TEAM_NAMES.get(short.upper().strip(), short.strip())
+def expand_kbo(code: str) -> str:
+    return KBO_TEAM_NAMES.get(code.upper().strip(), code.strip().title())
 
 @st.cache_data(ttl=300)
 def fetch_kbo(date_str: str) -> tuple[list, str, str]:
-    """
-    Scrape the official KBO English scoreboard for a given date.
-    Uses ASP.NET __VIEWSTATE POST to navigate to past dates.
-    """
-    base_url = "https://eng.koreabaseball.com/Schedule/Scoreboard.aspx"
-
-    # Step 1: GET the page to grab __VIEWSTATE tokens
+    url = f"https://eng.koreabaseball.com/Schedule/Scoreboard.aspx?searchDate={date_str}"
     try:
-        r0 = requests.get(base_url, headers={**HEADERS, "Referer": "https://eng.koreabaseball.com/"}, timeout=14)
-        if r0.status_code != 200:
-            return [], f"KBO site returned HTTP {r0.status_code}.", base_url
+        r = requests.get(url, headers={**HEADERS, "Referer": "https://eng.koreabaseball.com/"}, timeout=14)
+        if r.status_code != 200:
+            return [], f"KBO site returned HTTP {r.status_code}.", url
     except Exception as e:
-        return [], f"Network error reaching KBO site: {e}", base_url
+        return [], f"Network error: {e}", url
 
-    soup0 = BeautifulSoup(r0.text, "lxml")
-
-    # Extract ASP.NET hidden fields for the POST
-    def hidden(name):
-        el = soup0.find("input", {"name": name})
-        return el["value"] if el and el.get("value") else ""
-
-    viewstate          = hidden("__VIEWSTATE")
-    viewstate_gen      = hidden("__VIEWSTATEGENERATOR")
-    event_validation   = hidden("__EVENTVALIDATION")
-
-    # Step 2: POST with the target date
-    # The date picker control name from the KBO site
-    compact = date_str.replace("-", "")   # "20260529"
-    post_data = {
-        "__VIEWSTATE":          viewstate,
-        "__VIEWSTATEGENERATOR": viewstate_gen,
-        "__EVENTVALIDATION":    event_validation,
-        "__EVENTTARGET":        "ctl00$ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$udpRecord",
-        "__EVENTARGUMENT":      "",
-        "ctl00$ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$ddlYear":   date_str[:4],
-        "ctl00$ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$ddlMonth":  str(int(date_str[5:7])),
-        "ctl00$ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$ddlDay":    str(int(date_str[8:10])),
-        "ctl00$ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$leagueId":  "1",
-        "ctl00$ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$seriesId":  "0",
-    }
-
-    try:
-        r1 = requests.post(
-            base_url,
-            data=post_data,
-            headers={**HEADERS, "Referer": base_url, "Content-Type": "application/x-www-form-urlencoded"},
-            timeout=14,
-        )
-        if r1.status_code != 200:
-            # Fall back to GET (works for today)
-            r1 = r0
-    except Exception:
-        r1 = r0   # fall back to today's page
-
-    soup = BeautifulSoup(r1.text, "lxml")
+    soup  = BeautifulSoup(r.text, "lxml")
     games = []
 
-    # ── Parse the scoreboard ─────────────────────────────────────────────────
-    # Structure confirmed from live fetch:
-    #   - Team header text: "KT 18:30 DOOSAN" before each table
-    #   - Venue text: "JAMSIL 18:30" after header
-    #   - Table rows: TEAM | 1..15 | R | H | E | B
-    #   - Completed innings have digits, unplayed have "-"
+    # ── Extract game header texts ─────────────────────────────────────────────
+    # Each game header sits between two team logo <img> tags.
+    # In the page text between consecutive logo img tags we see:
+    #   FINAL game:     "TEAMCODE SCORE FINAL SCORE TEAMCODE"
+    #   Scheduled game: "TEAMCODE TIME TEAMCODE"
     #
-    # Strategy: find all tables that look like scoreboard tables
-    # (have a TEAM column + R column), then pair with the preceding header text.
+    # We scan the page text for these patterns, then pair with the
+    # subsequent scoreboard table.
 
-    all_tables = soup.find_all("table")
-    page_text  = soup.get_text(" ")
-
-    # Find game header patterns: "CODE TIME CODE" e.g. "KT 18:30 DOOSAN"
-    header_pattern = re.compile(
-        r'([A-Z]{2,7})\s+(\d{1,2}:\d{2})\s+([A-Z]{2,7})'
+    # Pattern for FINAL: e.g. "LG 4 FINAL 1 HANWHA"
+    final_pat = re.compile(
+        r'\b([A-Z]{2,7})\s+(\d{1,2})\s+FINAL\s+(\d{1,2})\s+([A-Z]{2,7})\b'
     )
-    headers_found = list(header_pattern.finditer(page_text))
+    # Pattern for SCHEDULED/LIVE: e.g. "LG 18:30 KT" or "KT 3 LG" (live)
+    sched_pat = re.compile(
+        r'\b([A-Z]{2,7})\s+(\d{1,2}:\d{2})\s+([A-Z]{2,7})\b'
+    )
 
-    # Walk tables and match to headers
-    header_idx = 0
-    for tbl in all_tables:
+    page_text = soup.get_text(" ")
+
+    # Build ordered list of game headers from page text
+    game_headers = []
+    seen_spans = set()
+
+    for m in final_pat.finditer(page_text):
+        if m.start() not in seen_spans:
+            seen_spans.add(m.start())
+            away_code, away_scr, home_scr, home_code = m.group(1), m.group(2), m.group(3), m.group(4)
+            # Validate both codes are KBO teams
+            if away_code in KBO_TEAM_NAMES and home_code in KBO_TEAM_NAMES:
+                game_headers.append({
+                    "away": expand_kbo(away_code),
+                    "home": expand_kbo(home_code),
+                    "away_score": away_scr,
+                    "home_score": home_scr,
+                    "status": "FINAL",
+                    "time": "",
+                    "pos": m.start(),
+                })
+
+    for m in sched_pat.finditer(page_text):
+        if m.start() not in seen_spans:
+            seen_spans.add(m.start())
+            away_code, time_val, home_code = m.group(1), m.group(2), m.group(3)
+            if away_code in KBO_TEAM_NAMES and home_code in KBO_TEAM_NAMES:
+                game_headers.append({
+                    "away": expand_kbo(away_code),
+                    "home": expand_kbo(home_code),
+                    "away_score": None,
+                    "home_score": None,
+                    "status": "SCHEDULED",
+                    "time": time_val,
+                    "pos": m.start(),
+                })
+
+    # Sort by position in page (document order)
+    game_headers.sort(key=lambda x: x["pos"])
+
+    # ── Extract venue from page text for each game ────────────────────────────
+    # Venue line appears right after each header: "DAEJEON 18:30 W: ..."
+    # We grab the text between the header match and the next table
+    venue_pat = re.compile(r'([A-Z][A-Z\-]+)\s+\d{1,2}:\d{2}')
+
+    # ── Parse linescore tables ────────────────────────────────────────────────
+    # Find tables that look like scoreboard tables:
+    # first column is a known KBO team code, remaining columns are digits or "-"
+    score_tables = []
+    for tbl in soup.find_all("table"):
         rows = tbl.find_all("tr", recursive=False)
         if not rows:
             tbody = tbl.find("tbody")
-            rows  = tbody.find_all("tr", recursive=False) if tbody else []
-
+            rows = tbody.find_all("tr", recursive=False) if tbody else []
         if len(rows) < 2:
             continue
 
-        # Check if this looks like a scoreboard table:
-        # First column of each row should be a team code
-        first_cells = [r.find(["th","td"]) for r in rows if r.find(["th","td"])]
-        team_codes  = [c.get_text(strip=True) for c in first_cells
-                       if c and c.get_text(strip=True).upper() in KBO_TEAM_NAMES]
+        # Check first cell of first two rows is a KBO team code
+        codes = []
+        for row in rows[:2]:
+            first = row.find(["th","td"], recursive=False)
+            if first:
+                codes.append(first.get_text(strip=True).upper())
 
-        if len(team_codes) < 2:
-            continue
+        if len(codes) == 2 and all(c in KBO_TEAM_NAMES for c in codes):
+            score_tables.append((codes, tbl))
 
-        away_code = team_codes[0]
-        home_code = team_codes[1]
-        away_row  = rows[0]
-        home_row  = rows[1]
+    # ── Match headers to tables and build game dicts ──────────────────────────
+    for i, hdr in enumerate(game_headers):
+        ls = []
+        venue = ""
 
-        def parse_score_row(row):
-            cells = [c.get_text(strip=True) for c in row.find_all(["th","td"], recursive=False)]
-            # cells[0] = team code, cells[1..N] = innings+totals
-            # Last 4 are R, H, E, B; find R (first total after innings)
-            # A cell is "played" if it's a digit; "-" means not played
-            innings, r_val = [], None
-            rhe_start = None
-            for i, c in enumerate(cells[1:], 1):
-                if c == "-" or re.match(r"^\d+$", c):
-                    innings.append(c)
-                else:
-                    break
-            # After innings: R H E B
-            totals = [c for c in cells[len(innings)+1:] if re.match(r"^\d*$", c)]
-            r_val  = totals[0] if totals else None
-            return innings, r_val
+        if i < len(score_tables):
+            codes, tbl = score_tables[i]
+            rows = tbl.find_all("tr", recursive=False)
+            if not rows:
+                tbody = tbl.find("tbody")
+                rows = tbody.find_all("tr", recursive=False) if tbody else []
 
-        away_innings, away_r = parse_score_row(away_row)
-        home_innings, home_r = parse_score_row(home_row)
-
-        # Determine if game is complete: R column has a real value
-        # and at least 9 innings were played (no "-" in first 9)
-        def is_complete(innings):
-            played = [c for c in innings[:9] if c != "-"]
-            return len(played) >= 9
-
-        final    = is_complete(away_innings) and is_complete(home_innings)
-        away_scr = away_r if final else None
-        home_scr = home_r if final else None
-
-        # Get time from the matched header
-        time_val = ""
-        if header_idx < len(headers_found):
-            time_val = headers_found[header_idx].group(2)
-            header_idx += 1
+            for row in rows[:2]:
+                cells = [c.get_text(strip=True) for c in row.find_all(["th","td"], recursive=False)]
+                if not cells:
+                    continue
+                team_code = cells[0]
+                # Remaining cells: innings (digits or "-") then R H E B
+                inn_cells = cells[1:]
+                # Split into innings and totals: innings end at last "-" or last digit before R
+                # R is the first non-inning total — it appears after all innings
+                # Innings: cells that are digit or "-"
+                # Totals: last 4 cells (R H E B), may be empty string if unplayed
+                innings = []
+                r_val = None
+                if len(inn_cells) >= 4:
+                    totals = inn_cells[-4:]   # R, H, E, B
+                    inning_cells = inn_cells[:-4]
+                    innings = [c for c in inning_cells if c]  # strip empty
+                    r_val = totals[0] if totals[0] and re.match(r'^\d+$', totals[0]) else None
+                ls.append({
+                    "team":    expand_kbo(team_code),
+                    "innings": innings,
+                    "r": r_val or "–",
+                    "h": totals[1] if len(totals) > 1 and totals[1] else "–",
+                    "e": totals[2] if len(totals) > 2 and totals[2] else "–",
+                })
 
         games.append({
-            "away":       expand_kbo_name(away_code),
-            "home":       expand_kbo_name(home_code),
-            "away_score": away_scr,
-            "home_score": home_scr,
-            "venue":      "",
-            "time":       time_val,
-            "status":     "FINAL" if final else "SCHEDULED",
-            "linescore":  [],
+            "away":       hdr["away"],
+            "home":       hdr["home"],
+            "away_score": hdr["away_score"],
+            "home_score": hdr["home_score"],
+            "venue":      venue,
+            "time":       hdr["time"],
+            "status":     hdr["status"],
+            "linescore":  ls,
         })
 
     if not games:
         return [], (
-            f"Could not parse KBO scoreboard for {fmt_date(date_str)}. "
-            f"The date may be outside the season or the page format changed."
-        ), base_url
+            f"No KBO games found for {fmt_date(date_str)}. "
+            f"May be an off day (KBO plays Tue–Sun, no Mondays)."
+        ), url
 
-    return games, "", base_url
-
+    return games, "", url
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RENDER
@@ -643,9 +636,10 @@ def render_card(g: dict, league: str, date_str: str):
             f'<a class="ext-link" href="https://npb.jp/bis/eng/{year}/games/gm{compact}.html" target="_blank">All Games</a>'
         )
     else:
+        kbo_url = f"https://eng.koreabaseball.com/Schedule/Scoreboard.aspx?searchDate={date_str}"
         links = (
-            f'<a class="ext-link" href="https://mykbostats.com/games/{date_str}" target="_blank">MyKBOStats</a>'
-            f'<a class="ext-link" href="https://eng.koreabaseball.com/Schedule/GameCenter/Main.aspx" target="_blank">KBO Center</a>'
+            f'<a class="ext-link" href="{kbo_url}" target="_blank">KBO Official</a>'
+            f'<a class="ext-link" href="https://mykbostats.com/games" target="_blank">MyKBOStats</a>'
         )
 
     venue_html = f"<div class='card-venue'>{venue}</div>" if venue else ""
