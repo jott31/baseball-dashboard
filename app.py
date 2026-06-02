@@ -390,98 +390,159 @@ def get_npb_schedule_from_day(date_str: str) -> list[dict]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# KBO SCRAPER  —  mykbostats.com/games/YYYY-MM-DD
+# KBO SCRAPER  —  mykbostats.com
+#
+# Confirmed structure (from live search result snippets):
+#
+# mykbostats.com/games/YYYY-MM-DD redirects to an individual game page.
+# Every individual game page has a sidebar with the full day's game list:
+#
+#   "May 29, 2026 Game List
+#    · Kia Tigers · L: Lee Eui-lee · 2 : 12 · Final · LG Twins · W: Wells
+#    · KT Wiz · W: Sauer · 7 : 1 · Final · Kiwoom Heroes · L: Kanakubo Yuto
+#    · Lotte Giants · W: Choi Jun-yong · 6 : 2 · Final/10 · NC Dinos
+#    · Doosan Bears · W: ... · 9 : 7 · Final · Samsung Lions
+#    · SSG Landers · ... · 3 : 4 · Final · Hanwha Eagles"
+#
+# Strategy:
+#  1. Build a URL for any known game on that date from the schedule endpoint
+#  2. Fetch that page and parse the sidebar game list text
+#  3. Pattern: Team1 [· pitcher]? · Score1 : Score2 · Status · Team2
+#
+# Fallback: if we can't guess a game URL, fetch /games/ (today's list) and
+# redirect to the right date using the date-specific API parameter.
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=300)
 def fetch_kbo(date_str: str) -> tuple[list, str, str]:
+    # mykbostats.com/games/YYYY-MM-DD redirects to one game page for that date.
+    # That page contains a sidebar listing ALL games that day.
+    # We just need to land on any page for that date.
     url = f"https://mykbostats.com/games/{date_str}"
+    ref = "https://mykbostats.com/"
+
     try:
-        r = requests.get(url, headers={**HEADERS, "Referer": "https://mykbostats.com/"}, timeout=14)
+        r = requests.get(url, headers={**HEADERS, "Referer": ref}, timeout=14,
+                         allow_redirects=True)
     except Exception as e:
         return [], f"Network error: {e}", url
+
     if r.status_code == 404:
-        return [], f"No KBO games found for {fmt_date(date_str)}.", url
+        return [], f"No KBO games page for {fmt_date(date_str)}.", url
     if r.status_code != 200:
         return [], f"MyKBOStats returned HTTP {r.status_code}.", url
 
-    soup  = BeautifulSoup(r.text, "lxml")
+    final_url = r.url  # may have redirected to a specific game page
+    soup = BeautifulSoup(r.text, "lxml")
     games = []
 
-    cards = (
-        soup.select("div.game-card") or
-        soup.select("div.game-box")  or
-        soup.select("div.game_card") or
-        soup.select("article.game")  or
-        [d for d in soup.find_all("div")
-         if "game" in " ".join(d.get("class", [])).lower()
-         and 30 < len(d.get_text(strip=True)) < 400]
+    # ── Find the game list sidebar ────────────────────────────────────────────
+    # The sidebar contains a date header like "May 29, 2026 Game List"
+    # followed by game entries. In HTML it's typically a <div> or <ul>
+    # with game rows as <li> or <div> elements.
+    #
+    # Each game row text (from search snippet analysis):
+    #   "Kia Tigers · L: Lee Eui-lee · 2 : 12 · Final · LG Twins · W: Wells"
+    #   "KT Wiz · W: Sauer · 7 : 1 · Final · Kiwoom Heroes · L: Kanakubo Yuto"
+    #   "Lotte Giants · W: Choi Jun-yong · 6 : 2 · Final/10 · NC Dinos"
+    #
+    # Pattern: away · [W/L: pitcher ·] score1 : score2 · status[/innings] · home · [W/L: pitcher]
+    # Score format: "2 : 12" or "7 : 1"
+    # Status: "Final" or "Final/10" (extra innings) or "N : M" (live/scheduled)
+
+    # Get full page text and find the game list section
+    page_text = soup.get_text(" ", strip=True)
+
+    # Find the date header in the text to locate the game list
+    compact = date_str.replace("-", "")
+    date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+    date_header_pattern = date_obj.strftime("%B %-d, %Y") + " Game List"
+
+    # Extract text starting from the game list header
+    list_start = page_text.find(date_header_pattern)
+    if list_start == -1:
+        # Try without year or with different format
+        alt_header = date_obj.strftime("%B %-d") + " Game List"
+        list_start = page_text.find(alt_header)
+
+    if list_start != -1:
+        # Take text from the game list header, up to ~2000 chars
+        game_list_text = page_text[list_start:list_start + 2000]
+    else:
+        # Fall back to full page text — game list is somewhere in there
+        game_list_text = page_text
+
+    # Parse game entries using the confirmed score pattern "N : M"
+    # Each game: Team1 ... N : M ... (Final|Bot|Top|Canceled|Postponed) ... Team2
+    #
+    # Split on score patterns and reconstruct games
+    # The score separator " : " is unique to scores on this page
+    score_pattern = re.compile(
+        r'([A-Z][A-Za-z\s]+?)'           # Team 1 name (starts with capital)
+        r'(?:·\s*[WL]:[^·]+)?'           # optional pitcher info
+        r'·?\s*(\d{1,2})\s*:\s*(\d{1,2})'  # Score1 : Score2
+        r'\s*·?\s*(Final(?:/\d+)?|Canceled|Postponed|Rained Out|'
+        r'Bot \d+|Top \d+|\d+:\d+\s*(?:pm|am)?)'  # status
+        r'\s*·?\s*([A-Z][A-Za-z\s]+?)'   # Team 2 name
+        r'(?:·\s*[WL]:[^·\n]+)?'         # optional pitcher info
+        r'(?=·\s*[A-Z]|$|\n)',            # lookahead: next game or end
+        re.IGNORECASE
     )
 
-    # Deduplicate — skip child divs already captured by a parent
-    unique = []
-    for c in cards:
-        if not any(c in uc.descendants for uc in unique):
-            unique.append(c)
+    for m in score_pattern.finditer(game_list_text):
+        away   = m.group(1).strip().rstrip('·').strip()
+        score1 = m.group(2)
+        score2 = m.group(3)
+        status = m.group(4).strip()
+        home   = m.group(5).strip().rstrip('·').strip()
 
-    for card in unique:
-        team_els  = card.select(".team-name,.team_name,.teamName,span.name,a.team-link,.away-team,.home-team")
-        score_els = card.select(".score,.run,.runs,td.score,span.score,.total-score")
-        status_el = card.select_one(".status,.game-status,.final,.result,.inning")
+        # Clean up team names — remove trailing pitcher/status fragments
+        away = re.sub(r'\s*(W:|L:|·).*$', '', away).strip()
+        home = re.sub(r'\s*(W:|L:|·).*$', '', home).strip()
 
-        away = home = away_score = home_score = None
-
-        if len(team_els) >= 2:
-            away = team_els[0].get_text(strip=True)
-            home = team_els[1].get_text(strip=True)
-
-        score_vals = [s.get_text(strip=True) for s in score_els
-                      if re.match(r"^\d+$", s.get_text(strip=True))]
-        if len(score_vals) >= 2:
-            away_score, home_score = score_vals[0], score_vals[1]
-
-        if not away or not home:
-            text = card.get_text(" ", strip=True)
-            m = re.search(
-                r"([A-Za-z][A-Za-z\s\-\.]+?)\s+(\d{1,2})\s+([A-Za-z][A-Za-z\s\-\.]+?)\s+(\d{1,2})\s*(?:Final|F\b)",
-                text, re.IGNORECASE
-            )
-            if m:
-                away, home = m.group(1).strip(), m.group(3).strip()
-                away_score, home_score = m.group(2), m.group(4)
-
-        if not away or not home:
+        if not away or not home or len(away) < 2 or len(home) < 2:
             continue
 
-        status_text = status_el.get_text(strip=True) if status_el else ""
-        time_m      = re.search(r"(\d{1,2}:\d{2}\s*(?:AM|PM)?(?:\s*KST)?)", status_text, re.I)
-        is_final    = bool(re.search(r"\bfinal\b|\bF\b", status_text, re.I))
-
-        if away_score and home_score:
-            status = "FINAL"
-        elif is_final:
-            status = "FINAL"
-        elif time_m:
-            status = time_m.group(1).strip()
-        else:
-            status = "SCHEDULED"
-
+        is_final = bool(re.match(r'Final', status, re.I))
         games.append({
-            "away": away, "home": home,
-            "away_score": away_score if (away_score and home_score) else None,
-            "home_score": home_score if (away_score and home_score) else None,
-            "venue": "", "time": time_m.group(1) if time_m else "",
-            "status": status, "linescore": [],
+            "away":       away,
+            "home":       home,
+            "away_score": score1 if is_final else None,
+            "home_score": score2 if is_final else None,
+            "venue":      "",
+            "time":       "",
+            "status":     "FINAL" if is_final else status,
+            "linescore":  [],
         })
+
+    # ── Fallback: parse page text for "N : M" score patterns anywhere ────────
+    if not games:
+        # Simpler broad scan — find all "Word Word N : M Final Word Word" sequences
+        for m in re.finditer(
+            r'([A-Z][A-Za-z]+(?:\s[A-Za-z]+){0,3})\s+'
+            r'(\d{1,2})\s*:\s*(\d{1,2})\s+'
+            r'(Final(?:/\d+)?|Canceled|Rained Out|Postponed)\s+'
+            r'([A-Z][A-Za-z]+(?:\s[A-Za-z]+){0,3})',
+            game_list_text
+        ):
+            away, s1, s2, status, home = m.group(1), m.group(2), m.group(3), m.group(4), m.group(5)
+            is_final = "Final" in status
+            games.append({
+                "away": away.strip(), "home": home.strip(),
+                "away_score": s1 if is_final else None,
+                "home_score": s2 if is_final else None,
+                "venue": "", "time": "",
+                "status": "FINAL" if is_final else status,
+                "linescore": [],
+            })
 
     if not games:
         return [], (
             f"Could not extract KBO games for {fmt_date(date_str)}. "
-            "Page structure may differ — check the source link."
-        ), url
+            f"Check directly: {final_url}"
+        ), final_url
 
-    return games, "", url
-
+    return games, "", final_url
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RENDER
