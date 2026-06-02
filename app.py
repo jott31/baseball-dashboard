@@ -101,11 +101,8 @@ KBO_TEAMS = {
     "SSG Landers":   "139831",
 }
 
-NPB_LEAGUE_ID  = "4591"
-KBO_LEAGUE_ID  = "4830"
-# League name strings as used by TheSportsDB eventsday endpoint
-NPB_LEAGUE_NAME = "Japanese Baseball League"
-KBO_LEAGUE_NAME = "Korean Baseball Organization"
+NPB_LEAGUE_ID = "4591"
+KBO_LEAGUE_ID = "4830"
 
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
@@ -140,18 +137,6 @@ def winner_cls(hs, as_):
 
 
 # ── API ───────────────────────────────────────────────────────────────────────
-@st.cache_data(ttl=300)
-def fetch_day_events(league_name: str, date_str: str) -> list:
-    """eventsday.php — all events for a league on a given date."""
-    try:
-        r = requests.get(f"{TSDB}/eventsday.php",
-                         params={"d": date_str, "l": league_name},
-                         headers=HEADERS, timeout=12)
-        r.raise_for_status()
-        return r.json().get("events") or []
-    except Exception:
-        return []
-
 @st.cache_data(ttl=300)
 def fetch_team_last(team_id: str) -> list:
     try:
@@ -200,18 +185,13 @@ def fetch_event_lineup(event_id: str) -> list:
 
 
 # ── COLLECT GAMES FOR A DATE ──────────────────────────────────────────────────
-def get_games_on_date(teams: dict, league_name: str, date_str: str) -> list:
+def get_games_on_date(teams: dict, league_id: str, date_str: str) -> list:
     """
-    1. Try eventsday.php (efficient — one call for all league games on a date).
-    2. Fall back to per-team eventslast.php if eventsday returns nothing.
+    Per-team eventslast.php — reliable on the TSDB free tier.
+    Deduplicates by event ID and filters to the requested date.
     """
-    day_events = fetch_day_events(league_name, date_str)
-    if day_events:
-        return sorted(day_events, key=lambda e: (e.get("strTime") or ""))
-
-    # Fallback: scrape last-5 results per team
-    seen = set()
-    games = []
+    seen: set = set()
+    games: list = []
     progress = st.progress(0, text="Fetching game data…")
     team_list = list(teams.items())
     for i, (name, tid) in enumerate(team_list):
@@ -284,7 +264,6 @@ def render_linescore(ls: dict):
 
 def render_simple_score_table(away: str, home: str, as_d: str, hs_d: str,
                                ah: str, hh: str, ae: str, he: str):
-    """Fallback when no inning-by-inning data is available."""
     show_rhe = any([ah, hh, ae, he])
     if show_rhe:
         hdr = "<th class='team-col'></th><th class='total'>R</th><th class='total'>H</th><th class='total'>E</th>"
@@ -340,19 +319,8 @@ def render_lineup(lineup: list, home: str, away: str, league: str):
 
 # ── EXTERNAL LINKS ────────────────────────────────────────────────────────────
 def build_links(league: str, date_str: str, home: str, away: str) -> str:
-    """
-    Return HTML link block pointing at pages that actually show box scores.
-
-    NPB:
-      - NPB.jp official results page (year-indexed, user navigates to date)
-      - Baseball Reference NPB schedule (shows all games with scores for the season)
-    KBO:
-      - MyKBOStats games page filtered to date (shows all games + box score links)
-      - Baseball Reference KBO schedule
-      - KBO official Game Center
-    """
     year      = date_str[:4] if date_str else CURRENT_YEAR
-    date_dash = date_str  # YYYY-MM-DD
+    date_dash = date_str
 
     if league == "NPB":
         npb_results = f"https://npb.jp/bis/eng/{year}/games/"
@@ -362,9 +330,9 @@ def build_links(league: str, date_str: str, home: str, away: str) -> str:
             f'<a class="ext-link" href="{bbref_sched}" target="_blank">BBRef Schedule</a>'
         )
     else:
-        mykbo      = f"https://mykbostats.com/games/{date_dash}"
+        mykbo       = f"https://mykbostats.com/games/{date_dash}"
         bbref_sched = f"https://www.baseball-reference.com/leagues/KBO/{year}-schedule.shtml"
-        kbo_center = "https://eng.koreabaseball.com/Schedule/GameCenter/Main.aspx"
+        kbo_center  = "https://eng.koreabaseball.com/Schedule/GameCenter/Main.aspx"
         return (
             f'<a class="ext-link" href="{mykbo}" target="_blank">MyKBOStats</a>'
             f'<a class="ext-link" href="{kbo_center}" target="_blank">KBO Game Center</a>'
@@ -388,7 +356,6 @@ def render_score_card(ev: dict, league: str):
     hs_d = str(hs) if final else "–"
     as_d = str(as_) if final else "–"
 
-    # Determine display status label
     if final:
         status_label = "FINAL"
     elif status.upper() in ("IN PROGRESS", "LIVE", "INPROGRESS"):
@@ -458,7 +425,6 @@ def render_sched_card(ev: dict, league: str):
     time_disp = utc_to_jst(date, time_)
     venue_str = f"<div class='sched-venue'>{venue}</div>" if venue else ""
 
-    # Quick-access link for schedule cards
     if league == "NPB":
         year = date[:4] if date else CURRENT_YEAR
         quick_link = f'<a class="ext-link" href="https://npb.jp/bis/eng/{year}/games/" target="_blank">NPB.jp</a>'
@@ -481,8 +447,8 @@ def render_sched_card(ev: dict, league: str):
 
 
 # ── SCORES PAGE ───────────────────────────────────────────────────────────────
-def scores_page(teams: dict, league: str, league_name: str, date_str: str):
-    games = get_games_on_date(teams, league_name, date_str)
+def scores_page(teams: dict, league: str, league_id: str, date_str: str):
+    games = get_games_on_date(teams, league_id, date_str)
     if not games:
         st.markdown(
             f"<div class='no-games'>No {league} games found for {fmt_display_date(date_str)}<br>"
@@ -565,21 +531,21 @@ st.markdown(f"<div class='section-label' style='margin-bottom:.8rem'>{dlabel}</d
 
 st.markdown("""
 <div class='warn-box'>
-  Data via TheSportsDB — tries league-day endpoint first, then falls back to per-team lookups.<br>
+  Data via TheSportsDB free API — fetches last 5 results per team to build each day's slate.<br>
   Results may lag 12–24 hours. Inning-by-inning box scores depend on TSDB coverage for each game.<br>
   Use the external links on each card for full box scores on official / third-party sites.
 </div>""", unsafe_allow_html=True)
 
 t_npb, t_kbo, t_npb_s, t_kbo_s = st.tabs([
-    "🇯🇵  NPB Scores", "🇰🇷  KBO Scores",
-    "🇯🇵  NPB Schedule", "🇰🇷  KBO Schedule",
+    "\U0001f1ef\U0001f1f5  NPB Scores", "\U0001f1f0\U0001f1f7  KBO Scores",
+    "\U0001f1ef\U0001f1f5  NPB Schedule", "\U0001f1f0\U0001f1f7  KBO Schedule",
 ])
 
 with t_npb:
-    scores_page(NPB_TEAMS, "NPB", NPB_LEAGUE_NAME, selected_str)
+    scores_page(NPB_TEAMS, "NPB", NPB_LEAGUE_ID, selected_str)
 
 with t_kbo:
-    scores_page(KBO_TEAMS, "KBO", KBO_LEAGUE_NAME, selected_str)
+    scores_page(KBO_TEAMS, "KBO", KBO_LEAGUE_ID, selected_str)
 
 with t_npb_s:
     schedule_page(NPB_TEAMS, "NPB")
