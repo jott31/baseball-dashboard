@@ -195,51 +195,61 @@ def parse_npb_game(game_url: str) -> dict:
     soup = BeautifulSoup(r.text, "lxml")
 
     # ── Team names + final scores ────────────────────────────────────────────
-    # The score block is a <ul> or <ol> where each <li> contains a table with:
-    #   | [logo img] | Team Full Name | Score |
-    # We identify it by looking for <li> items containing both a team name
-    # and a single digit score.
+    # Confirmed structure from live page fetch of s2026052901848.html:
     #
-    # More robustly: parse the page title which always has "TeamA vs TeamB"
-    # and the scores appear in the first content table after the breadcrumb.
+    #   Both teams live in ONE table with TWO <tr> rows:
+    #     <tr><td>[logo]</td><td>Tokyo Yakult Swallows</td><td>7</td></tr>
+    #     <tr><td>[logo]</td><td>Tohoku Rakuten Golden Eagles</td><td>2</td></tr>
+    #
+    # Key mistake in previous version: iterating by <li> and calling
+    # tbl.find_all("td") flattened both rows into one list, so cells[-1]
+    # always gave the HOME score and cells[-2] gave the HOME team — the
+    # away team was never captured, and only one score_rows entry was made.
+    #
+    # Fix: iterate every <tr> across every table and parse each row individually.
 
-    # Method A: page title
-    title = soup.title.string if soup.title else ""
-    # "Friday, May 29, 2026 (Scores) Rakuten vs Yakult"
+    # Method A: page title — "Friday, May 29, 2026 (Scores) Rakuten vs Yakult"
+    title   = soup.title.string if soup.title else ""
     title_m = re.search(r"\(Scores\)\s+(.+?)\s+vs\s+(.+?)(?:\s*\||\s*$)", title or "")
 
-    # Method B: find the score list — list items with full team name + score digit
-    # The structure is two <li> rows, each a table: logo | team name | score
+    # Method B: iterate every <tr> in the page; collect rows that look like
+    #   [logo_cell?]  [Team Full Name]  [score digit]
     score_rows = []
-    for li in soup.find_all("li"):
-        # Each score li contains a nested table
-        tbl = li.find("table")
-        if not tbl:
+    for tr in soup.find_all("tr"):
+        cells = [td.get_text(strip=True) for td in tr.find_all("td")]
+        cells = [c for c in cells if c]   # drop empty (logo) cells
+        if len(cells) < 2:
             continue
-        cells = [td.get_text(strip=True) for td in tbl.find_all("td")]
-        # Expect: ["", "Team Full Name", "7"] or similar
-        # Filter empty strings
-        cells = [c for c in cells if c]
-        if len(cells) >= 2:
-            # Last cell should be the score (1-2 digits)
-            if re.match(r"^\d{1,2}$", cells[-1]):
-                team_name = cells[-2] if len(cells) >= 2 else cells[0]
-                score     = cells[-1]
-                # Exclude navigation-like short strings
-                if len(team_name) > 3 and not re.match(r"^\d", team_name):
-                    score_rows.append((team_name, score))
+        last = cells[-1]
+        second_last = cells[-2]
+        # Score cell: 1-2 digit number only
+        if not re.match(r"^\d{1,2}$", last):
+            continue
+        # Team name: more than 3 chars, doesn't start with a digit
+        if len(second_last) <= 3 or re.match(r"^\d", second_last):
+            continue
+        # Exclude stat-table header cells
+        if second_last.upper() in {"AB", "IP", "H", "R", "E", "BB", "SO", "HP",
+                                    "HB", "ER", "BF", "WP", "LP", "HR", "ERA"}:
+            continue
+        # Exclude player rows like "Nagaoka, SS" or "Yamano, (W)" — they have commas
+        if "," in second_last:
+            continue
+        score_rows.append((second_last, last))
+
+    # Take only the first two valid score rows — those are away then home
+    score_rows = score_rows[:2]
 
     if len(score_rows) >= 2:
-        # First row = away (listed first on npb.jp), second = home
         result["away"]       = score_rows[0][0]
         result["home"]       = score_rows[1][0]
         result["away_score"] = score_rows[0][1]
         result["home_score"] = score_rows[1][1]
         result["status"]     = "FINAL"
     elif title_m:
-        # Scores not found in list — game may be scheduled
-        result["away"] = title_m.group(1).strip()
-        result["home"] = title_m.group(2).strip()
+        # No scores found — scheduled game, use title for team names
+        result["away"]   = title_m.group(1).strip()
+        result["home"]   = title_m.group(2).strip()
         result["status"] = "SCHEDULED"
 
     # ── Venue + time ─────────────────────────────────────────────────────────
