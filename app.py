@@ -188,16 +188,23 @@ def fetch_event_lineup(event_id: str) -> list:
 def get_games_on_date(teams: dict, league_id: str, date_str: str) -> list:
     """
     Per-team eventslast.php — reliable on the TSDB free tier.
-    Deduplicates by event ID and filters to the requested date.
+    Deduplicates by event ID and strictly filters to the requested date AND league.
     """
     seen: set = set()
     games: list = []
+    known_team_names = {t.lower() for t in teams.keys()}
     progress = st.progress(0, text="Fetching game data…")
     team_list = list(teams.items())
     for i, (name, tid) in enumerate(team_list):
         for ev in fetch_team_last(tid):
             eid = ev.get("idEvent")
-            if eid and eid not in seen and ev.get("dateEvent") == date_str:
+            ev_league_id = str(ev.get("idLeague", ""))
+            ev_date = ev.get("dateEvent")
+            # Strict league + date filter — blocks MLB and other leagues bleeding in
+            if (eid
+                    and eid not in seen
+                    and ev_date == date_str
+                    and ev_league_id == str(league_id)):
                 seen.add(eid)
                 games.append(ev)
         progress.progress((i + 1) / len(team_list), text=f"Fetching… {name}")
@@ -205,13 +212,15 @@ def get_games_on_date(teams: dict, league_id: str, date_str: str) -> list:
     return sorted(games, key=lambda e: (e.get("strTime") or ""))
 
 
-def get_upcoming_games(teams: dict) -> dict[str, list]:
+def get_upcoming_games(teams: dict, league_id: str) -> dict[str, list]:
     seen: set = set()
     by_date: dict[str, list] = {}
     for name, tid in teams.items():
         for ev in fetch_team_next(tid):
             eid = ev.get("idEvent")
-            if eid and eid not in seen:
+            ev_league_id = str(ev.get("idLeague", ""))
+            # Strict league filter — prevents MLB/other games bleeding into schedule
+            if eid and eid not in seen and ev_league_id == str(league_id):
                 seen.add(eid)
                 d = ev.get("dateEvent", "?")
                 by_date.setdefault(d, []).append(ev)
@@ -461,12 +470,12 @@ def scores_page(teams: dict, league: str, league_id: str, date_str: str):
 
 
 # ── SCHEDULE PAGE ─────────────────────────────────────────────────────────────
-def schedule_page(teams: dict, league: str):
+def schedule_page(teams: dict, league: str, league_id: str):
     jst_now = now_jst()
     today_s = jst_now.strftime("%Y-%m-%d")
     tmrw_s  = (jst_now + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    by_date = get_upcoming_games(teams)
+    by_date = get_upcoming_games(teams, league_id)
     by_date = {d: v for d, v in by_date.items() if d >= today_s}
 
     if not by_date:
@@ -548,10 +557,10 @@ with t_kbo:
     scores_page(KBO_TEAMS, "KBO", KBO_LEAGUE_ID, selected_str)
 
 with t_npb_s:
-    schedule_page(NPB_TEAMS, "NPB")
+    schedule_page(NPB_TEAMS, "NPB", NPB_LEAGUE_ID)
 
 with t_kbo_s:
-    schedule_page(KBO_TEAMS, "KBO")
+    schedule_page(KBO_TEAMS, "KBO", KBO_LEAGUE_ID)
 
 st.markdown("---")
 st.markdown(
