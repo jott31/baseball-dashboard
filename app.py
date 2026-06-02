@@ -40,9 +40,15 @@ html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; backgroun
 .card-links { display:flex; gap:10px; flex-wrap:wrap; }
 .ext-link { font-family:'IBM Plex Mono',monospace; font-size:.6rem; letter-spacing:.08em; color:#444; text-decoration:none; border-bottom:1px solid #222; white-space:nowrap; }
 .ext-link:hover { color:#bbb; border-color:#555; }
+.linescore-wrap { overflow-x:auto; margin:10px 0 4px 0; }
+.linescore { border-collapse:collapse; width:100%; font-family:'IBM Plex Mono',monospace; font-size:.65rem; }
+.linescore th { color:#2a2a2a; font-weight:400; padding:3px 6px; text-align:center; border-bottom:1px solid #1a1a1a; }
+.linescore td { padding:3px 6px; text-align:center; color:#666; }
+.linescore td.team-col { text-align:left; color:#3a3a3a; min-width:80px; }
+.linescore td.tot { font-weight:600; color:#aaa; border-left:1px solid #1e1e1e; }
 .no-games { font-family:'IBM Plex Mono',monospace; font-size:.75rem; color:#2a2a2a; letter-spacing:.12em; padding:28px 0; text-align:center; border:1px dashed #181818; border-radius:6px; margin:8px 0; }
 .info-box { font-family:'IBM Plex Mono',monospace; font-size:.7rem; color:#555; letter-spacing:.1em; background:#111; border:1px solid #1e1e1e; border-radius:5px; padding:10px 14px; margin-bottom:12px; line-height:1.7; }
-.err-box { font-family:'IBM Plex Mono',monospace; font-size:.7rem; color:#884444; letter-spacing:.1em; background:#1a1010; border:1px solid #331a1a; border-radius:5px; padding:10px 14px; margin-bottom:8px; line-height:1.7; }
+.err-box  { font-family:'IBM Plex Mono',monospace; font-size:.7rem; color:#884444; letter-spacing:.1em; background:#1a1010; border:1px solid #331a1a; border-radius:5px; padding:10px 14px; margin-bottom:8px; line-height:1.7; }
 #MainMenu, footer, header { visibility:hidden; }
 div[data-testid="stDecoration"] { display:none; }
 div[data-baseweb="tab-list"] { gap:2px; border-bottom:1px solid #1a1a1a !important; }
@@ -51,7 +57,6 @@ div[aria-selected="true"][data-baseweb="tab"] { color:#ddd !important; border-bo
 </style>
 """, unsafe_allow_html=True)
 
-# ── CONSTANTS ──────────────────────────────────────────────────────────────────
 JST = ZoneInfo("Asia/Tokyo")
 KST = ZoneInfo("Asia/Seoul")
 
@@ -62,33 +67,6 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive",
-}
-
-# Navigation / UI words that appear on npb.jp but are NOT team names
-NPB_NAV_WORDS = {
-    "prev", "next", "games", "regular", "season", "farm", "league", "interleague",
-    "central", "pacific", "standings", "stats", "teams", "players", "calendar",
-    "schedules", "scores", "nippon", "professional", "baseball", "organization",
-    "english", "japanese", "monday", "tuesday", "wednesday", "thursday", "friday",
-    "saturday", "sunday", "january", "february", "march", "april", "may", "june",
-    "july", "august", "september", "october", "november", "december",
-    "game", "result", "match", "back", "number", "abbreviations", "register",
-}
-
-# Known NPB team short names as they appear on npb.jp English pages
-NPB_TEAM_NAMES = {
-    "Yomiuri", "Giants",
-    "Hanshin", "Tigers",
-    "DeNA", "BayStars", "Baystars",
-    "Hiroshima", "Carp",
-    "Yakult", "Swallows",
-    "Chunichi", "Dragons",
-    "SoftBank", "Hawks",
-    "Nippon-Ham", "Fighters",
-    "ORIX", "Orix", "Buffaloes",
-    "Rakuten", "Eagles",
-    "Seibu", "Lions",
-    "Lotte", "Marines",
 }
 
 def now_jst():
@@ -109,214 +87,325 @@ def winner_cls(a, h):
     except Exception:
         return "neutral", "neutral"
 
-def is_nav_word(text: str) -> bool:
-    return text.lower().strip() in NPB_NAV_WORDS
+def get(url, referer="https://npb.jp/"):
+    return requests.get(url, headers={**HEADERS, "Referer": referer}, timeout=14)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NPB SCRAPER  —  npb.jp/bis/eng/YYYY/games/gmYYYYMMDD.html
-#
-# HTML structure (from live inspection):
-#   The page has a <div id="contentsMain"> or <div class="contentsMain">
-#   Each game sits in a <div class="largeScore"> (completed) or layout table row
-#
-#   Completed game layout (table-based):
-#     <table class="largeScoreTable"> or similar
-#       <tr>
-#         <td class="teamName away"><a>Nippon-Ham</a></td>
-#         <td class="score away">3</td>
-#         <td class="scoreSep">-</td>
-#         <td class="score home">1</td>
-#         <td class="teamName home"><a>Yomiuri</a></td>
-#       </tr>
-#       <tr class="stadium"><td colspan="5">ES CON FIELD</td></tr>
-#
-#   Scheduled game layout:
-#     Same structure but score cells contain time "14:00" instead of digits
-#
-#   Section headers: <h3> or <div class="categoryTitle"> saying "INTERLEAGUE" etc.
+# STEP 1 — scrape the day-index page to get individual game links
+# URL: https://npb.jp/bis/eng/YYYY/games/gmYYYYMMDD.html
+# These pages contain <a href="sYYYYMMDDnnnnn.html"> links for each game
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=300)
-def fetch_npb(date_str: str) -> tuple[list, str, str]:
-    """Returns (games, error_msg, source_url)"""
+def get_npb_game_links(date_str: str) -> tuple[list[str], str]:
+    """
+    Returns (list_of_game_urls, error_msg).
+    Game URLs look like: https://npb.jp/bis/eng/2026/games/s2026052901848.html
+    """
     year    = date_str[:4]
     compact = date_str.replace("-", "")
-    url     = f"https://npb.jp/bis/eng/{year}/games/gm{compact}.html"
+    day_url = f"https://npb.jp/bis/eng/{year}/games/gm{compact}.html"
 
     try:
-        r = requests.get(url, headers={**HEADERS, "Referer": "https://npb.jp/"}, timeout=14)
+        r = get(day_url)
     except Exception as e:
-        return [], f"Network error: {e}", url
+        return [], f"Network error fetching day index: {e}"
 
     if r.status_code == 404:
-        return [], "No games page for this date (off-day or outside season).", url
+        return [], "No games page for this date (off-day or outside season)."
     if r.status_code != 200:
-        return [], f"NPB.jp returned HTTP {r.status_code}.", url
+        return [], f"NPB.jp day page returned HTTP {r.status_code}."
+
+    soup  = BeautifulSoup(r.text, "lxml")
+    base  = f"https://npb.jp/bis/eng/{year}/games/"
+
+    # Individual game links match pattern: s{YYYYMMDD}{5-digits}.html
+    # e.g. s2026052901848.html  — only regular season (not farm = fgm*)
+    game_links = []
+    pattern    = re.compile(rf"s{compact}\d{{5}}\.html")
+
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        # href may be relative ("s2026052901848.html") or absolute
+        filename = href.split("/")[-1]
+        if pattern.match(filename):
+            full_url = base + filename if not href.startswith("http") else href
+            if full_url not in game_links:
+                game_links.append(full_url)
+
+    if not game_links:
+        # Games may not have individual pages yet (scheduled, not completed)
+        # Return empty list with no error — caller will show schedule info
+        return [], ""
+
+    return game_links, ""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 2 — scrape each individual game page
+# URL: https://npb.jp/bis/eng/YYYY/games/sYYYYMMDDnnnnn.html
+#
+# Confirmed structure (from live fetch of s2026052901848.html):
+#
+#   Page title:  "Friday, May 29, 2026 (Scores) Rakuten vs Yakult"
+#
+#   Score block (list items):
+#     - | | Tokyo Yakult Swallows | 7 |
+#     - | | Tohoku Rakuten Golden Eagles | 2 |
+#
+#   Venue / time line (table):
+#     | Rakuten Mobile | T - 3:13 ( 18:00 - 21:13 ) Att. - 25,137 |
+#
+#   Linescore (text row):
+#     Yakult  1 0 0 2 0 0 2 0 2 - 7 15 0
+#     Rakuten 0 0 0 0 0 1 0 0 1 - 2 8 1
+#
+#   The away team is listed FIRST in the score block (top row).
+# ══════════════════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=300)
+def parse_npb_game(game_url: str) -> dict:
+    """
+    Returns a game dict with keys:
+      away, home, away_score, home_score, venue, time, status,
+      linescore (list of dicts: {team, innings[], r, h, e}),
+      game_url
+    """
+    result = {
+        "away": "", "home": "",
+        "away_score": None, "home_score": None,
+        "venue": "", "time": "",
+        "status": "UNKNOWN",
+        "linescore": [],
+        "game_url": game_url,
+        "error": "",
+    }
+
+    try:
+        r = get(game_url)
+    except Exception as e:
+        result["error"] = str(e)
+        return result
+
+    if r.status_code != 200:
+        result["error"] = f"HTTP {r.status_code}"
+        return result
 
     soup = BeautifulSoup(r.text, "lxml")
+
+    # ── Team names + final scores ────────────────────────────────────────────
+    # The score block is a <ul> or <ol> where each <li> contains a table with:
+    #   | [logo img] | Team Full Name | Score |
+    # We identify it by looking for <li> items containing both a team name
+    # and a single digit score.
+    #
+    # More robustly: parse the page title which always has "TeamA vs TeamB"
+    # and the scores appear in the first content table after the breadcrumb.
+
+    # Method A: page title
+    title = soup.title.string if soup.title else ""
+    # "Friday, May 29, 2026 (Scores) Rakuten vs Yakult"
+    title_m = re.search(r"\(Scores\)\s+(.+?)\s+vs\s+(.+?)(?:\s*\||\s*$)", title or "")
+
+    # Method B: find the score list — list items with full team name + score digit
+    # The structure is two <li> rows, each a table: logo | team name | score
+    score_rows = []
+    for li in soup.find_all("li"):
+        # Each score li contains a nested table
+        tbl = li.find("table")
+        if not tbl:
+            continue
+        cells = [td.get_text(strip=True) for td in tbl.find_all("td")]
+        # Expect: ["", "Team Full Name", "7"] or similar
+        # Filter empty strings
+        cells = [c for c in cells if c]
+        if len(cells) >= 2:
+            # Last cell should be the score (1-2 digits)
+            if re.match(r"^\d{1,2}$", cells[-1]):
+                team_name = cells[-2] if len(cells) >= 2 else cells[0]
+                score     = cells[-1]
+                # Exclude navigation-like short strings
+                if len(team_name) > 3 and not re.match(r"^\d", team_name):
+                    score_rows.append((team_name, score))
+
+    if len(score_rows) >= 2:
+        # First row = away (listed first on npb.jp), second = home
+        result["away"]       = score_rows[0][0]
+        result["home"]       = score_rows[1][0]
+        result["away_score"] = score_rows[0][1]
+        result["home_score"] = score_rows[1][1]
+        result["status"]     = "FINAL"
+    elif title_m:
+        # Scores not found in list — game may be scheduled
+        result["away"] = title_m.group(1).strip()
+        result["home"] = title_m.group(2).strip()
+        result["status"] = "SCHEDULED"
+
+    # ── Venue + time ─────────────────────────────────────────────────────────
+    # Line: "Rakuten Mobile | T - 3:13 ( 18:00 - 21:13 ) Att. - 25,137"
+    # Venue is first cell, time info is second cell
+    for tbl in soup.find_all("table"):
+        cells = [td.get_text(strip=True) for td in tbl.find_all("td") if td.get_text(strip=True)]
+        if not cells:
+            continue
+        row_text = " ".join(cells)
+        # Look for the venue+time table: contains a time pattern and "Att."
+        if re.search(r"\d{1,2}:\d{2}", row_text) and len(cells) >= 2:
+            # First meaningful cell = venue
+            venue_candidate = cells[0]
+            # Exclude cells that look like stats headers (AB, H, RBI etc.)
+            if not re.match(r"^(AB|IP|R|H|E|BB|SO|WP|LP|HR)$", venue_candidate):
+                if len(venue_candidate) > 2:
+                    result["venue"] = venue_candidate
+                    # Extract start time from "( 18:00 - 21:13 )"
+                    time_m = re.search(r"\(\s*(\d{1,2}:\d{2})\s*-", row_text)
+                    if time_m:
+                        result["time"] = time_m.group(1)
+                    break
+
+    # ── Linescore ────────────────────────────────────────────────────────────
+    # Text rows:  "Yakult  1 0 0 2 0 0 2 0 2 - 7 15 0"
+    # These appear as <td> text inside a table, one row per team.
+    # The short team name (Yakult, Rakuten) is followed by inning digits,
+    # a "-", then R H E totals.
+    linescore = []
+    for tbl in soup.find_all("table"):
+        rows = tbl.find_all("tr")
+        for row in rows:
+            text = row.get_text(" ", strip=True)
+            # Match: ShortName d d d ... - R H E
+            ls_m = re.match(
+                r"^([A-Za-z][A-Za-z\-]+)\s+((?:\d+\s+)+)-\s+(\d+)\s+(\d+)\s+(\d+)\s*$",
+                text
+            )
+            if ls_m:
+                short_name = ls_m.group(1)
+                innings    = ls_m.group(2).split()
+                runs       = ls_m.group(3)
+                hits       = ls_m.group(4)
+                errors     = ls_m.group(5)
+                linescore.append({
+                    "team": short_name,
+                    "innings": innings,
+                    "r": runs, "h": hits, "e": errors,
+                })
+
+    if linescore:
+        result["linescore"] = linescore
+
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Also handle SCHEDULED day pages (no game links yet) —
+# fall back to parsing the day-index page for team names + times
+# ══════════════════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=300)
+def get_npb_schedule_from_day(date_str: str) -> list[dict]:
+    """
+    Parse the day-index page for scheduled (unplayed) games.
+    Returns list of partial game dicts with away/home/time/venue but no scores.
+    """
+    year    = date_str[:4]
+    compact = date_str.replace("-", "")
+    day_url = f"https://npb.jp/bis/eng/{year}/games/gm{compact}.html"
+
+    try:
+        r = get(day_url)
+        if r.status_code != 200:
+            return []
+    except Exception:
+        return []
+
+    soup  = BeautifulSoup(r.text, "lxml")
     games = []
 
-    # ── Strategy 1: Find score tables ──────────────────────────────────────
-    # npb.jp wraps each game in a table; look for tds with class containing "score"
-    # The away team is always listed first (left side), home team second (right)
+    # On the day page, each game is represented by two team logo imgs (_l.gif)
+    # with adjacent text nodes giving the short team name,
+    # and a venue+time text between them.
+    #
+    # The confirmed markdown showed this pattern (simplified):
+    #   logo_f_l.gif  "Nippon-Ham"    "ES CON FIELD 18:00"    logo_g_l.gif  "Yomiuri"
+    #
+    # Strategy: find all large logo imgs (_l.gif, not _m.gif or _s.gif),
+    # collect their surrounding text in document order,
+    # then pair them up as away/home.
 
-    # Find all <img> alt tags — team logos have alt text = short team name
-    # e.g. <img src="logo_f_l.gif" alt="Nippon-Ham Fighters">
-    # These are reliable team name sources, uncontaminated by nav text
+    large_logos = []
+    for img in soup.find_all("img"):
+        src = img.get("src", "")
+        if "_l.gif" in src and "flag_" not in src and "samurai" not in src.lower() and "japan" not in src.lower():
+            # Get the nearest text sibling/parent text as team name
+            parent = img.parent
+            text   = parent.get_text(strip=True) if parent else ""
+            # Also check the next sibling
+            if not text or len(text) > 40:
+                text = img.get("alt", "").replace("#", "").strip()
+            large_logos.append({"text": text, "src": src})
 
-    # Walk all <table> elements in order; each game is typically one table
-    all_tables = soup.find_all("table")
+    # Pair up: even index = away, odd = home
+    for i in range(0, len(large_logos) - 1, 2):
+        away_text = large_logos[i]["text"]
+        home_text = large_logos[i + 1]["text"]
+        games.append({
+            "away": away_text or f"Team {i+1}",
+            "home": home_text or f"Team {i+2}",
+            "away_score": None,
+            "home_score": None,
+            "venue": "",
+            "time": "",
+            "status": "SCHEDULED",
+            "linescore": [],
+            "game_url": day_url,
+            "error": "",
+        })
 
-    for tbl in all_tables:
-        tbl_text = tbl.get_text(" ", strip=True)
-
-        # Skip nav/header tables (they're short and contain nav keywords)
-        if len(tbl_text) > 500:
-            continue
-
-        # Extract team names from img alt attributes within this table
-        imgs = tbl.find_all("img")
-        team_names_from_imgs = []
-        for img in imgs:
-            alt = img.get("alt", "").strip()
-            # Filter out league logos (Central League, Pacific League, etc.)
-            if alt and not any(skip in alt.lower() for skip in ["league", "japan baseball", "samurai"]):
-                # Clean: "Nippon-Ham Fighters" → "Nippon-Ham" (use short form)
-                team_names_from_imgs.append(alt)
-
-        # Extract scores: look for <td> cells that are purely digits (1-2 digit)
-        score_cells = []
-        for td in tbl.find_all("td"):
-            t = td.get_text(strip=True)
-            if re.match(r"^\d{1,2}$", t):
-                score_cells.append(t)
-
-        # Extract time: look for HH:MM pattern
-        time_m = re.search(r"\b(\d{1,2}:\d{2})\b", tbl_text)
-
-        # Extract venue: look for known stadium keywords or a dedicated cell
-        venue = ""
-        for td in tbl.find_all("td"):
-            t = td.get_text(strip=True)
-            if any(kw in t for kw in ["Dome", "Stadium", "Field", "Marine", "Koshien",
-                                       "Jingu", "Mazda", "Koushien", "PayPay", "Belluna",
-                                       "Kyocera", "ZOZO", "ES CON", "Vantelin", "Rakuten"]):
-                venue = t
-                break
-
-        if len(team_names_from_imgs) >= 2 and len(score_cells) >= 2:
-            away_name = team_names_from_imgs[0]
-            home_name = team_names_from_imgs[1]
-            games.append({
-                "away": away_name, "home": home_name,
-                "away_score": score_cells[0], "home_score": score_cells[1],
-                "venue": venue, "time": "",
-                "status": "FINAL",
-            })
-        elif len(team_names_from_imgs) >= 2 and time_m:
-            games.append({
-                "away": team_names_from_imgs[0], "home": team_names_from_imgs[1],
-                "away_score": None, "home_score": None,
-                "venue": venue, "time": time_m.group(1),
-                "status": "SCHEDULED",
-            })
-
-    # ── Strategy 2: img alt fallback if no tables matched ──────────────────
-    if not games:
-        # Collect all team logo images in document order
-        # npb.jp logo filenames: logo_f_l.gif, logo_g_l.gif etc (large logos = game page)
-        team_imgs = []
-        for img in soup.find_all("img"):
-            src = img.get("src", "")
-            alt = img.get("alt", "").strip()
-            # Large logos on game pages use "_l.gif" suffix
-            if "_l.gif" in src and alt and "league" not in alt.lower() and "samurai" not in alt.lower() and "japan" not in alt.lower():
-                team_imgs.append((alt, img))
-
-        # Pair them up: even index = away, odd index = home
-        page_text = soup.get_text(" ")
-        all_times = re.findall(r"\b(\d{1,2}:\d{2})\b", page_text)
-        # Extract all standalone score numbers near team logo pairs
-        # We look for digits between paired logos using document position
-        # This is a simplified pairing — assumes games appear in order
-        for i in range(0, len(team_imgs) - 1, 2):
-            away_name = team_imgs[i][0]
-            home_name = team_imgs[i + 1][0]
-            time_val  = all_times[i // 2] if i // 2 < len(all_times) else ""
-            games.append({
-                "away": away_name, "home": home_name,
-                "away_score": None, "home_score": None,
-                "venue": "", "time": time_val,
-                "status": "SCHEDULED",
-            })
-
-    if not games:
-        return [], (
-            "Could not parse game data from NPB.jp. "
-            "The page may use JavaScript-rendered scores or an unexpected layout."
-        ), url
-
-    return games, "", url
+    return games
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # KBO SCRAPER  —  mykbostats.com/games/YYYY-MM-DD
-#
-# HTML structure:
-#   Each game is a <div class="game-card"> or <div class="game">
-#   Inside: away team, away score, home team, home score, game status
-#   Game status: "Final" text or a time like "6:30 PM"
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=300)
 def fetch_kbo(date_str: str) -> tuple[list, str, str]:
-    """Returns (games, error_msg, source_url)"""
     url = f"https://mykbostats.com/games/{date_str}"
-
     try:
         r = requests.get(url, headers={**HEADERS, "Referer": "https://mykbostats.com/"}, timeout=14)
     except Exception as e:
         return [], f"Network error: {e}", url
-
     if r.status_code == 404:
         return [], f"No KBO games found for {fmt_date(date_str)}.", url
     if r.status_code != 200:
         return [], f"MyKBOStats returned HTTP {r.status_code}.", url
 
-    soup = BeautifulSoup(r.text, "lxml")
+    soup  = BeautifulSoup(r.text, "lxml")
     games = []
 
-    # mykbostats game cards — try multiple known class patterns
     cards = (
         soup.select("div.game-card") or
-        soup.select("div.game-box") or
+        soup.select("div.game-box")  or
         soup.select("div.game_card") or
-        soup.select("article.game") or
-        # broad fallback: any div whose class contains 'game'
-        [d for d in soup.find_all("div") if "game" in " ".join(d.get("class", [])).lower()
+        soup.select("article.game")  or
+        [d for d in soup.find_all("div")
+         if "game" in " ".join(d.get("class", [])).lower()
          and 30 < len(d.get_text(strip=True)) < 400]
     )
 
-    # Remove duplicates (child divs of already-matched parents)
-    seen_ids = set()
-    unique_cards = []
+    # Deduplicate — skip child divs already captured by a parent
+    unique = []
     for c in cards:
-        cid = id(c)
-        if cid not in seen_ids:
-            # Check it's not a child of another card we've already added
-            if not any(c in uc.descendants for uc in unique_cards):
-                unique_cards.append(c)
-                seen_ids.add(cid)
+        if not any(c in uc.descendants for uc in unique):
+            unique.append(c)
 
-    for card in unique_cards:
-        # Try structured CSS selectors first
-        team_els  = card.select(".team-name, .team_name, .teamName, span.name, a.team-link, .away-team, .home-team")
-        score_els = card.select(".score, .run, .runs, td.score, span.score, .total-score")
-        status_el = card.select_one(".status, .game-status, .final, .result, .inning")
+    for card in unique:
+        team_els  = card.select(".team-name,.team_name,.teamName,span.name,a.team-link,.away-team,.home-team")
+        score_els = card.select(".score,.run,.runs,td.score,span.score,.total-score")
+        status_el = card.select_one(".status,.game-status,.final,.result,.inning")
 
-        away, home = None, None
-        away_score, home_score = None, None
+        away = home = away_score = home_score = None
 
         if len(team_els) >= 2:
             away = team_els[0].get_text(strip=True)
@@ -327,32 +416,22 @@ def fetch_kbo(date_str: str) -> tuple[list, str, str]:
         if len(score_vals) >= 2:
             away_score, home_score = score_vals[0], score_vals[1]
 
-        # If structured selectors failed, try regex on card text
         if not away or not home:
             text = card.get_text(" ", strip=True)
-            # Pattern: "TeamA N TeamB M Final" or "TeamA @ TeamB TIME"
             m = re.search(
-                r"([A-Za-z][A-Za-z\s\-\.]+?)\s+(\d{1,2})\s+([A-Za-z][A-Za-z\s\-\.]+?)\s+(\d{1,2})\s*(?:Final|F\b|–|$)",
+                r"([A-Za-z][A-Za-z\s\-\.]+?)\s+(\d{1,2})\s+([A-Za-z][A-Za-z\s\-\.]+?)\s+(\d{1,2})\s*(?:Final|F\b)",
                 text, re.IGNORECASE
             )
             if m:
                 away, home = m.group(1).strip(), m.group(3).strip()
                 away_score, home_score = m.group(2), m.group(4)
-            else:
-                m2 = re.search(
-                    r"([A-Za-z][A-Za-z\s\-]+?)\s+[@vs\.]+\s+([A-Za-z][A-Za-z\s\-]+?)\s+(\d{1,2}:\d{2})",
-                    text, re.IGNORECASE
-                )
-                if m2:
-                    away, home = m2.group(1).strip(), m2.group(2).strip()
 
         if not away or not home:
             continue
 
-        # Determine status
-        status_text = status_el.get_text(strip=True) if status_el else card.get_text(" ", strip=True)
-        is_final = bool(re.search(r"\bfinal\b|\bF\b", status_text, re.I))
-        time_m   = re.search(r"(\d{1,2}:\d{2}\s*(?:AM|PM)?(?:\s*KST)?)", status_text, re.IGNORECASE)
+        status_text = status_el.get_text(strip=True) if status_el else ""
+        time_m      = re.search(r"(\d{1,2}:\d{2}\s*(?:AM|PM)?(?:\s*KST)?)", status_text, re.I)
+        is_final    = bool(re.search(r"\bfinal\b|\bF\b", status_text, re.I))
 
         if away_score and home_score:
             status = "FINAL"
@@ -368,13 +447,13 @@ def fetch_kbo(date_str: str) -> tuple[list, str, str]:
             "away_score": away_score if (away_score and home_score) else None,
             "home_score": home_score if (away_score and home_score) else None,
             "venue": "", "time": time_m.group(1) if time_m else "",
-            "status": status,
+            "status": status, "linescore": [],
         })
 
     if not games:
         return [], (
-            f"Scraped MyKBOStats but could not extract games for {fmt_date(date_str)}. "
-            "The page structure may differ — check the source link."
+            f"Could not extract KBO games for {fmt_date(date_str)}. "
+            "Page structure may differ — check the source link."
         ), url
 
     return games, "", url
@@ -384,6 +463,27 @@ def fetch_kbo(date_str: str) -> tuple[list, str, str]:
 # RENDER
 # ══════════════════════════════════════════════════════════════════════════════
 
+def render_linescore(ls: list):
+    if not ls:
+        return
+    max_inn = max(len(row["innings"]) for row in ls)
+    inn_headers = "".join(f"<th>{i+1}</th>" for i in range(max_inn))
+    hdr = f"<tr><th></th>{inn_headers}<th class='tot'>R</th><th class='tot'>H</th><th class='tot'>E</th></tr>"
+    rows_html = ""
+    for row in ls:
+        cells = "".join(f"<td>{row['innings'][i] if i < len(row['innings']) else '–'}</td>"
+                        for i in range(max_inn))
+        rows_html += (f"<tr><td class='team-col'>{row['team']}</td>{cells}"
+                      f"<td class='tot'>{row['r']}</td>"
+                      f"<td class='tot'>{row['h']}</td>"
+                      f"<td class='tot'>{row['e']}</td></tr>")
+    st.markdown(
+        f"<div class='linescore-wrap'><table class='linescore'>"
+        f"<thead>{hdr}</thead><tbody>{rows_html}</tbody></table></div>",
+        unsafe_allow_html=True
+    )
+
+
 def render_card(g: dict, league: str, date_str: str):
     away   = g.get("away", "?")
     home   = g.get("home", "?")
@@ -392,36 +492,36 @@ def render_card(g: dict, league: str, date_str: str):
     venue  = g.get("venue", "")
     time_  = g.get("time", "")
     status = g.get("status", "")
+    ls     = g.get("linescore", [])
+    gurl   = g.get("game_url", "")
     final  = as_ is not None and hs is not None
 
     ac, hc = winner_cls(as_, hs) if final else ("neutral", "neutral")
     as_d   = str(as_) if final else "–"
-    hs_d   = str(hs) if final else "–"
+    hs_d   = str(hs)  if final else "–"
 
     if status == "FINAL":
         label = "FINAL"
     elif status in ("IN PROGRESS", "LIVE", "INPROGRESS"):
         label = "🔴 LIVE"
     elif time_:
-        tz = "JST" if league == "NPB" else "KST"
-        label = f"{time_} {tz}"
+        label = f"{time_} {'JST' if league == 'NPB' else 'KST'}"
     else:
-        label = "SCHEDULED"
+        label = status or "SCHEDULED"
 
     year    = date_str[:4]
     compact = date_str.replace("-", "")
 
     if league == "NPB":
-        npb_url = f"https://npb.jp/bis/eng/{year}/games/gm{compact}.html"
+        primary_url = gurl or f"https://npb.jp/bis/eng/{year}/games/gm{compact}.html"
         links = (
-            f'<a class="ext-link" href="{npb_url}" target="_blank">NPB.jp</a>'
-            f'<a class="ext-link" href="https://www.baseball-reference.com/leagues/NPB/{year}-schedule.shtml" target="_blank">BBRef</a>'
+            f'<a class="ext-link" href="{primary_url}" target="_blank">NPB.jp</a>'
+            f'<a class="ext-link" href="https://npb.jp/bis/eng/{year}/games/gm{compact}.html" target="_blank">All Games</a>'
         )
     else:
         links = (
             f'<a class="ext-link" href="https://mykbostats.com/games/{date_str}" target="_blank">MyKBOStats</a>'
             f'<a class="ext-link" href="https://eng.koreabaseball.com/Schedule/GameCenter/Main.aspx" target="_blank">KBO Center</a>'
-            f'<a class="ext-link" href="https://www.baseball-reference.com/leagues/KBO/{year}-schedule.shtml" target="_blank">BBRef</a>'
         )
 
     venue_html = f"<div class='card-venue'>{venue}</div>" if venue else ""
@@ -450,28 +550,72 @@ def render_card(g: dict, league: str, date_str: str):
       </div>
     </div>""", unsafe_allow_html=True)
 
+    if final and ls:
+        with st.expander(f"Linescore — {away} @ {home}"):
+            render_linescore(ls)
 
-def scores_page(league: str, date_str: str):
-    if league == "NPB":
-        with st.spinner("Fetching from NPB.jp…"):
-            games, err, src_url = fetch_npb(date_str)
-    else:
-        with st.spinner("Fetching from MyKBOStats…"):
-            games, err, src_url = fetch_kbo(date_str)
+
+def scores_page_npb(date_str: str):
+    year    = date_str[:4]
+    compact = date_str.replace("-", "")
+
+    with st.spinner("Fetching NPB game links…"):
+        game_links, err = get_npb_game_links(date_str)
 
     if err:
         st.markdown(f"<div class='err-box'>⚠ {err}</div>", unsafe_allow_html=True)
-        st.markdown(f"[View source directly ↗]({src_url})", unsafe_allow_html=False)
+        return
+
+    if not game_links:
+        # No individual game pages yet — show scheduled games from day page
+        st.markdown(
+            "<div class='info-box'>Games not yet completed — showing schedule from NPB.jp</div>",
+            unsafe_allow_html=True
+        )
+        sched = get_npb_schedule_from_day(date_str)
+        if sched:
+            for g in sched:
+                render_card(g, "NPB", date_str)
+        else:
+            st.markdown(
+                f"<div class='no-games'>No NPB games found for {fmt_date(date_str)}</div>",
+                unsafe_allow_html=True
+            )
+        return
+
+    # Fetch each individual game page
+    progress = st.progress(0, text="Loading game results…")
+    games = []
+    for i, gurl in enumerate(game_links):
+        g = parse_npb_game(gurl)
+        games.append(g)
+        progress.progress((i + 1) / len(game_links), text=f"Loading game {i+1} of {len(game_links)}…")
+    progress.empty()
+
+    for g in games:
+        if g.get("error"):
+            st.markdown(f"<div class='err-box'>⚠ Could not load game: {g['error']}</div>", unsafe_allow_html=True)
+        else:
+            render_card(g, "NPB", date_str)
+
+
+def scores_page_kbo(date_str: str):
+    with st.spinner("Fetching KBO scores from MyKBOStats…"):
+        games, err, src_url = fetch_kbo(date_str)
+
+    if err:
+        st.markdown(f"<div class='err-box'>⚠ {err}</div>", unsafe_allow_html=True)
+        st.markdown(f"[View on MyKBOStats ↗]({src_url})")
 
     if not games and not err:
         st.markdown(
-            f"<div class='no-games'>No {league} games found for {fmt_date(date_str)}</div>",
+            f"<div class='no-games'>No KBO games found for {fmt_date(date_str)}</div>",
             unsafe_allow_html=True
         )
         return
 
     for g in games:
-        render_card(g, league, date_str)
+        render_card(g, "KBO", date_str)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -510,7 +654,7 @@ with c3:
 today_s     = jst_now.strftime("%Y-%m-%d")
 yesterday_s = (jst_now - timedelta(days=1)).strftime("%Y-%m-%d")
 dlabel = (
-    f"Today · {fmt_date(selected_str)}"     if selected_str == today_s else
+    f"Today · {fmt_date(selected_str)}"     if selected_str == today_s     else
     f"Yesterday · {fmt_date(selected_str)}" if selected_str == yesterday_s else
     fmt_date(selected_str)
 )
@@ -518,21 +662,21 @@ st.markdown(f"<div class='section-label' style='margin-bottom:.8rem'>{dlabel}</d
 
 st.markdown("""
 <div class='info-box'>
-  Data scraped live from <strong>NPB.jp</strong> (official) and <strong>MyKBOStats.com</strong>.
-  Cache: 5 min &nbsp;·&nbsp; Use source links on each card for full box scores.
+  NPB data from <strong>NPB.jp</strong> (official individual game pages) ·
+  KBO data from <strong>MyKBOStats.com</strong> · Cache: 5 min
 </div>""", unsafe_allow_html=True)
 
 t_npb, t_kbo = st.tabs(["🇯🇵  NPB Scores", "🇰🇷  KBO Scores"])
 
 with t_npb:
-    scores_page("NPB", selected_str)
+    scores_page_npb(selected_str)
 
 with t_kbo:
-    scores_page("KBO", selected_str)
+    scores_page_kbo(selected_str)
 
 st.markdown("---")
 st.markdown(
     f"<span style='font-family:IBM Plex Mono,monospace;font-size:.58rem;color:#222;letter-spacing:.1em'>"
-    f"Sources: NPB.jp · MyKBOStats.com · {datetime.now(JST).year} season</span>",
+    f"NPB.jp · MyKBOStats.com · {datetime.now(JST).year} season</span>",
     unsafe_allow_html=True
 )
