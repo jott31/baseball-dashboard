@@ -195,49 +195,53 @@ def parse_npb_game(game_url: str) -> dict:
     soup = BeautifulSoup(r.text, "lxml")
 
     # ── Team names + final scores ────────────────────────────────────────────
-    # Confirmed structure from live page fetch of s2026052901848.html:
+    # Structure confirmed from live page fetch of s2026052901848.html:
     #
-    #   Both teams live in ONE table with TWO <tr> rows:
-    #     <tr><td>[logo]</td><td>Tokyo Yakult Swallows</td><td>7</td></tr>
-    #     <tr><td>[logo]</td><td>Tohoku Rakuten Golden Eagles</td><td>2</td></tr>
+    #   Score block is a <ul> where each <li> has its OWN single-row table:
+    #     <li><table><tr><th/><th>Tokyo Yakult Swallows</th><th>7</th></tr></table></li>
+    #     <li><table><tr><th/><th>Tohoku Rakuten Golden Eagles</th><th>2</th></tr></table></li>
     #
-    # Key mistake in previous version: iterating by <li> and calling
-    # tbl.find_all("td") flattened both rows into one list, so cells[-1]
-    # always gave the HOME score and cells[-2] gave the HOME team — the
-    # away team was never captured, and only one score_rows entry was made.
+    #   Cells are <th> not <td>, and tables are NESTED inside outer layout tables.
     #
-    # Fix: iterate every <tr> across every table and parse each row individually.
+    # Previous bugs:
+    #   1. Used find_all("td") — missed <th> score cells entirely
+    #   2. Used tr.find_all("td") without recursive=False — descended into nested
+    #      tables and matched the same row twice (outer tr + inner tr both returned
+    #      the same descendant tds), causing both team slots to show the away team.
+    #   3. Linescore: same nesting issue caused 4 rows instead of 2.
+    #
+    # Fix: use tr.find_all(["th","td"], recursive=False) — direct children only.
 
     # Method A: page title — "Friday, May 29, 2026 (Scores) Rakuten vs Yakult"
     title   = soup.title.string if soup.title else ""
     title_m = re.search(r"\(Scores\)\s+(.+?)\s+vs\s+(.+?)(?:\s*\||\s*$)", title or "")
 
-    # Method B: iterate every <tr> in the page; collect rows that look like
-    #   [logo_cell?]  [Team Full Name]  [score digit]
+    # Method B: scan every <tr>, get only its DIRECT child cells (th or td),
+    # look for rows shaped like: [empty?] [Team Full Name] [score digit]
     score_rows = []
     for tr in soup.find_all("tr"):
-        cells = [td.get_text(strip=True) for td in tr.find_all("td")]
-        cells = [c for c in cells if c]   # drop empty (logo) cells
+        # recursive=False → only direct children, never descends into nested tables
+        cells = [c.get_text(strip=True) for c in tr.find_all(["th", "td"], recursive=False)]
+        cells = [c for c in cells if c]   # drop empty logo cells
         if len(cells) < 2:
             continue
-        last = cells[-1]
+        last        = cells[-1]
         second_last = cells[-2]
-        # Score cell: 1-2 digit number only
+        # Score: 1-2 digit number
         if not re.match(r"^\d{1,2}$", last):
             continue
-        # Team name: more than 3 chars, doesn't start with a digit
+        # Team name: meaningful length, not starting with digit
         if len(second_last) <= 3 or re.match(r"^\d", second_last):
             continue
-        # Exclude stat-table header cells
+        # Exclude stat headers and player rows (player names contain commas)
         if second_last.upper() in {"AB", "IP", "H", "R", "E", "BB", "SO", "HP",
                                     "HB", "ER", "BF", "WP", "LP", "HR", "ERA"}:
             continue
-        # Exclude player rows like "Nagaoka, SS" or "Yamano, (W)" — they have commas
-        if "," in second_last:
+        if "," in second_last or "(" in second_last:
             continue
         score_rows.append((second_last, last))
 
-    # Take only the first two valid score rows — those are away then home
+    # First two valid rows are away then home (document order on npb.jp)
     score_rows = score_rows[:2]
 
     if len(score_rows) >= 2:
@@ -247,7 +251,6 @@ def parse_npb_game(game_url: str) -> dict:
         result["home_score"] = score_rows[1][1]
         result["status"]     = "FINAL"
     elif title_m:
-        # No scores found — scheduled game, use title for team names
         result["away"]   = title_m.group(1).strip()
         result["home"]   = title_m.group(2).strip()
         result["status"] = "SCHEDULED"
@@ -275,30 +278,41 @@ def parse_npb_game(game_url: str) -> dict:
                     break
 
     # ── Linescore ────────────────────────────────────────────────────────────
-    # Text rows:  "Yakult  1 0 0 2 0 0 2 0 2 - 7 15 0"
-    # These appear as <td> text inside a table, one row per team.
-    # The short team name (Yakult, Rakuten) is followed by inning digits,
-    # a "-", then R H E totals.
-    linescore = []
+    # Confirmed rows from s2026052901848.html:
+    #   "Yakult  1 0 0 2 0 0 2 0 2 - 7 15 0"
+    #   "Rakuten 0 0 0 0 0 1 0 0 1 - 2 8 1"
+    #
+    # Each linescore row is a <tr> inside a table. The full row text
+    # matches: ShortName [inning digits...] - R H E
+    #
+    # Nesting fix: iterate tables, then for each table iterate its direct
+    # child <tr> rows only (using find_all("tr", recursive=False) on tbody/table)
+    # to avoid matching the same row via both outer and inner table contexts.
+    linescore   = []
+    seen_ls_ids = set()
     for tbl in soup.find_all("table"):
-        rows = tbl.find_all("tr")
-        for row in rows:
+        # Get direct child rows only — avoids nested table duplication
+        direct_rows = tbl.find_all("tr", recursive=False)
+        # Also check tbody/thead direct children
+        for section in tbl.find_all(["tbody", "thead"], recursive=False):
+            direct_rows += section.find_all("tr", recursive=False)
+        for row in direct_rows:
+            row_id = id(row)
+            if row_id in seen_ls_ids:
+                continue
+            seen_ls_ids.add(row_id)
             text = row.get_text(" ", strip=True)
-            # Match: ShortName d d d ... - R H E
             ls_m = re.match(
                 r"^([A-Za-z][A-Za-z\-]+)\s+((?:\d+\s+)+)-\s+(\d+)\s+(\d+)\s+(\d+)\s*$",
                 text
             )
             if ls_m:
-                short_name = ls_m.group(1)
-                innings    = ls_m.group(2).split()
-                runs       = ls_m.group(3)
-                hits       = ls_m.group(4)
-                errors     = ls_m.group(5)
                 linescore.append({
-                    "team": short_name,
-                    "innings": innings,
-                    "r": runs, "h": hits, "e": errors,
+                    "team":    ls_m.group(1),
+                    "innings": ls_m.group(2).split(),
+                    "r": ls_m.group(3),
+                    "h": ls_m.group(4),
+                    "e": ls_m.group(5),
                 })
 
     if linescore:
