@@ -1,7 +1,8 @@
 import streamlit as st
 import requests
+from bs4 import BeautifulSoup
 import re
-from datetime import datetime, timedelta, timezone, date as date_type
+from datetime import datetime, timedelta, date as date_type
 from zoneinfo import ZoneInfo
 
 st.set_page_config(
@@ -27,7 +28,7 @@ html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; backgroun
 .team-name { font-family:'Bebas Neue',sans-serif; font-size:1.4rem; letter-spacing:.04em; line-height:1; }
 .team-name.winner { color:#f0f0f0; }
 .team-name.loser  { color:#383838; }
-.team-name.neutral{ color:#999; }
+.team-name.neutral{ color:#aaa; }
 .score-mid { display:flex; gap:14px; align-items:center; font-family:'IBM Plex Mono',monospace; }
 .score { font-size:2.1rem; font-weight:600; min-width:1.8ch; text-align:center; }
 .score.winner { color:#f0f0f0; }
@@ -39,21 +40,15 @@ html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; backgroun
 .card-links { display:flex; gap:10px; flex-wrap:wrap; }
 .ext-link { font-family:'IBM Plex Mono',monospace; font-size:.6rem; letter-spacing:.08em; color:#444; text-decoration:none; border-bottom:1px solid #222; white-space:nowrap; }
 .ext-link:hover { color:#bbb; border-color:#555; }
-.linescore-wrap { margin:8px 0; overflow-x:auto; }
-.linescore { border-collapse:collapse; width:100%; font-family:'IBM Plex Mono',monospace; font-size:.68rem; }
-.linescore th { color:#333; font-weight:400; letter-spacing:.12em; padding:3px 7px; text-align:center; border-bottom:1px solid #1a1a1a; }
-.linescore td { padding:3px 7px; text-align:center; color:#777; }
-.linescore td.team-col { text-align:left; color:#444; min-width:90px; }
-.linescore td.total { font-weight:600; color:#bbb; border-left:1px solid #1e1e1e; }
-.sched-card { background:#0d0d0d; border:1px solid #181818; border-radius:6px; padding:12px 16px; margin-bottom:6px; }
+.no-games { font-family:'IBM Plex Mono',monospace; font-size:.75rem; color:#2a2a2a; letter-spacing:.12em; padding:28px 0; text-align:center; border:1px dashed #181818; border-radius:6px; margin:8px 0; }
+.err-box { font-family:'IBM Plex Mono',monospace; font-size:.7rem; color:#555; letter-spacing:.1em; background:#111; border:1px solid #1e1e1e; border-radius:5px; padding:10px 14px; margin-bottom:12px; line-height:1.7; }
 .sched-date-hdr { font-family:'IBM Plex Mono',monospace; font-size:.6rem; color:#333; letter-spacing:.2em; text-transform:uppercase; margin:14px 0 6px 0; }
+.sched-card { background:#0d0d0d; border:1px solid #181818; border-radius:6px; padding:12px 16px; margin-bottom:6px; }
 .sched-matchup { display:flex; justify-content:space-between; align-items:center; }
 .sched-teams { font-family:'Bebas Neue',sans-serif; font-size:1.3rem; letter-spacing:.05em; color:#bbb; }
 .sched-at { color:#2a2a2a; margin:0 8px; }
 .sched-time { font-family:'IBM Plex Mono',monospace; font-size:.68rem; color:#444; letter-spacing:.1em; }
 .sched-venue { font-family:'IBM Plex Mono',monospace; font-size:.58rem; color:#2a2a2a; margin-top:3px; }
-.no-games { font-family:'IBM Plex Mono',monospace; font-size:.75rem; color:#2a2a2a; letter-spacing:.12em; padding:28px 0; text-align:center; border:1px dashed #181818; border-radius:6px; margin:8px 0; }
-.warn-box { font-family:'IBM Plex Mono',monospace; font-size:.7rem; color:#555; letter-spacing:.1em; background:#111; border:1px solid #222; border-radius:5px; padding:10px 14px; margin-bottom:12px; line-height:1.7; }
 #MainMenu, footer, header { visibility:hidden; }
 div[data-testid="stDecoration"] { display:none; }
 div[data-baseweb="tab-list"] { gap:2px; border-bottom:1px solid #1a1a1a !important; }
@@ -62,322 +57,412 @@ div[aria-selected="true"][data-baseweb="tab"] { color:#ddd !important; border-bo
 </style>
 """, unsafe_allow_html=True)
 
-# ── CONSTANTS ─────────────────────────────────────────────────────────────────
-TSDB    = "https://www.thesportsdb.com/api/v1/json/123"
+# ── CONSTANTS ──────────────────────────────────────────────────────────────────
+JST = ZoneInfo("Asia/Tokyo")
+KST = ZoneInfo("Asia/Seoul")
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "application/json",
-}
-JST = ZoneInfo("Asia/Tokyo")
-
-CURRENT_YEAR = str(datetime.now(JST).year)
-
-NPB_TEAMS = {
-    "Hanshin Tigers":               "135269",
-    "Yomiuri Giants":               "135270",
-    "Yokohama DeNA BayStars":       "135271",
-    "Hiroshima Toyo Carp":          "135272",
-    "Tokyo Yakult Swallows":        "135273",
-    "Chunichi Dragons":             "135274",
-    "Fukuoka SoftBank Hawks":       "135275",
-    "Orix Buffaloes":               "135276",
-    "Tohoku Rakuten Golden Eagles": "135277",
-    "Chiba Lotte Marines":          "135278",
-    "Saitama Seibu Lions":          "135279",
-    "Hokkaido Nippon-Ham Fighters": "135280",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
 }
 
-KBO_TEAMS = {
-    "Doosan Bears":  "139822",
-    "Hanwha Eagles": "139823",
-    "Kia Tigers":    "139824",
-    "Kiwoom Heroes": "139825",
-    "KT Wiz":        "139826",
-    "LG Twins":      "139827",
-    "Lotte Giants":  "139828",
-    "NC Dinos":      "139829",
-    "Samsung Lions": "139830",
-    "SSG Landers":   "139831",
-}
-
-NPB_LEAGUE_ID = "4591"
-KBO_LEAGUE_ID = "4830"
-
-
-# ── HELPERS ───────────────────────────────────────────────────────────────────
-def now_jst() -> datetime:
+def now_jst():
     return datetime.now(JST)
 
-def fmt_display_date(d: str) -> str:
+def fmt_date(d: str) -> str:
     try:
         return datetime.strptime(d, "%Y-%m-%d").strftime("%A, %B %-d")
     except Exception:
         return d
 
-def utc_to_jst(date_str: str, time_str: str) -> str:
-    if not time_str:
-        return ""
+def winner_cls(a, h):
     try:
-        dt = datetime.strptime(f"{date_str} {time_str[:5]}", "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
-        return dt.astimezone(JST).strftime("%-I:%M %p JST")
-    except Exception:
-        return time_str[:5]
-
-def winner_cls(hs, as_):
-    if hs is None or as_ is None:
+        ai, hi = int(a), int(h)
+        if hi > ai: return "loser", "winner"
+        if ai > hi: return "winner", "loser"
         return "neutral", "neutral"
-    try:
-        h, a = int(hs), int(as_)
-    except (TypeError, ValueError):
+    except Exception:
         return "neutral", "neutral"
-    if h > a:   return "winner", "loser"
-    elif a > h: return "loser",  "winner"
-    else:       return "neutral", "neutral"
 
 
-# ── API ───────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# NPB  —  scrape npb.jp/bis/eng
+# ══════════════════════════════════════════════════════════════════════════════
 @st.cache_data(ttl=300)
-def fetch_team_last(team_id: str) -> list:
-    try:
-        r = requests.get(f"{TSDB}/eventslast.php?id={team_id}", headers=HEADERS, timeout=10)
-        r.raise_for_status()
-        return r.json().get("results") or []
-    except Exception:
-        return []
-
-@st.cache_data(ttl=300)
-def fetch_team_next(team_id: str) -> list:
-    try:
-        r = requests.get(f"{TSDB}/eventsnext.php?id={team_id}", headers=HEADERS, timeout=10)
-        r.raise_for_status()
-        return r.json().get("events") or []
-    except Exception:
-        return []
-
-@st.cache_data(ttl=300)
-def fetch_event_stats(event_id: str) -> list:
-    try:
-        r = requests.get(f"{TSDB}/lookupeventstats.php?id={event_id}", headers=HEADERS, timeout=10)
-        r.raise_for_status()
-        return r.json().get("eventstats") or []
-    except Exception:
-        return []
-
-@st.cache_data(ttl=300)
-def fetch_event_detail(event_id: str) -> dict:
-    try:
-        r = requests.get(f"{TSDB}/lookupevent.php?id={event_id}", headers=HEADERS, timeout=10)
-        r.raise_for_status()
-        evs = r.json().get("events") or []
-        return evs[0] if evs else {}
-    except Exception:
-        return {}
-
-@st.cache_data(ttl=300)
-def fetch_event_lineup(event_id: str) -> list:
-    try:
-        r = requests.get(f"{TSDB}/lookuplineup.php?id={event_id}", headers=HEADERS, timeout=10)
-        r.raise_for_status()
-        return r.json().get("lineup") or []
-    except Exception:
-        return []
-
-
-# ── COLLECT GAMES FOR A DATE ──────────────────────────────────────────────────
-def get_games_on_date(teams: dict, league_id: str, date_str: str) -> list:
+def fetch_npb_games(date_str: str) -> tuple[list, str]:
     """
-    Per-team eventslast.php — reliable on the TSDB free tier.
-    Deduplicates by event ID and strictly filters to the requested date AND league.
+    Scrape npb.jp/bis/eng/YYYY/games/gmYYYYMMDD.html
+    Returns (games_list, error_msg).
+    Each game dict: away, home, away_score, home_score, venue, time, status, detail_url
     """
-    seen: set = set()
-    games: list = []
-    known_team_names = {t.lower() for t in teams.keys()}
-    progress = st.progress(0, text="Fetching game data…")
-    team_list = list(teams.items())
-    for i, (name, tid) in enumerate(team_list):
-        for ev in fetch_team_last(tid):
-            eid = ev.get("idEvent")
-            ev_league_id = str(ev.get("idLeague", ""))
-            ev_date = ev.get("dateEvent")
-            # Strict league + date filter — blocks MLB and other leagues bleeding in
-            if (eid
-                    and eid not in seen
-                    and ev_date == date_str
-                    and ev_league_id == str(league_id)):
-                seen.add(eid)
-                games.append(ev)
-        progress.progress((i + 1) / len(team_list), text=f"Fetching… {name}")
-    progress.empty()
-    return sorted(games, key=lambda e: (e.get("strTime") or ""))
+    year = date_str[:4]
+    compact = date_str.replace("-", "")
+    url = f"https://npb.jp/bis/eng/{year}/games/gm{compact}.html"
 
+    try:
+        r = requests.get(url, headers={**HEADERS, "Referer": "https://npb.jp/bis/eng/"}, timeout=12)
+        if r.status_code == 404:
+            return [], "No games page found for this date (off-day or pre-season)."
+        if r.status_code != 200:
+            return [], f"NPB.jp returned HTTP {r.status_code}. Try a different date."
+    except Exception as e:
+        return [], f"Network error fetching NPB data: {e}"
 
-def get_upcoming_games(teams: dict, league_id: str) -> dict[str, list]:
-    seen: set = set()
-    by_date: dict[str, list] = {}
-    for name, tid in teams.items():
-        for ev in fetch_team_next(tid):
-            eid = ev.get("idEvent")
-            ev_league_id = str(ev.get("idLeague", ""))
-            # Strict league filter — prevents MLB/other games bleeding into schedule
-            if eid and eid not in seen and ev_league_id == str(league_id):
-                seen.add(eid)
-                d = ev.get("dateEvent", "?")
-                by_date.setdefault(d, []).append(ev)
-    for d in by_date:
-        by_date[d].sort(key=lambda e: e.get("strTime") or "")
-    return dict(sorted(by_date.items()))
+    soup = BeautifulSoup(r.text, "lxml")
+    games = []
 
+    # npb.jp game rows: each game is a <div class="largeScore"> or a <table> row
+    # The page uses <section class="gameSchedule"> with game blocks inside
+    # Each game block has: away team, score (if final), home team, venue, time
+    # Structure: <div class="gameBox"> or <li> items under schedule section
 
-# ── LINESCORE ─────────────────────────────────────────────────────────────────
-def parse_linescore(stats: list, home: str, away: str) -> dict | None:
-    if not stats:
-        return None
-    innings: dict = {}
-    totals: dict  = {}
-    for s in stats:
-        team = s.get("strTeam", "")
-        stat = s.get("strStat", "")
-        val  = s.get("intValue", "")
-        side = "home" if home[:5].lower() in team.lower() else "away"
-        m = re.match(r"^Inning\s+(\d+)$", stat, re.IGNORECASE)
-        if m:
-            innings.setdefault(side, {})[int(m.group(1))] = val
-        elif stat in ("Runs", "Hits", "Errors"):
-            totals.setdefault(side, {})[stat[0]] = val
-    if not innings:
-        return None
-    max_inn = max((max(d.keys()) for d in innings.values() if d), default=0)
-    return {"innings": innings, "totals": totals, "max_inn": max_inn,
-            "home": home, "away": away} if max_inn else None
+    # Primary structure: tables with class containing "score" or game data
+    # Try multiple known selectors for robustness
 
-def render_linescore(ls: dict):
-    inn_nums = list(range(1, ls["max_inn"] + 1))
-    hdr = "<th class='team-col'></th>" + "".join(f"<th>{i}</th>" for i in inn_nums) + \
-          "<th class='total'>R</th><th class='total'>H</th><th class='total'>E</th>"
-    rows = ""
-    for side in ("away", "home"):
-        name  = ls[side][:14]
-        inn   = ls["innings"].get(side, {})
-        tot   = ls["totals"].get(side, {})
-        cells = f"<td class='team-col'>{name}</td>"
-        cells += "".join(f"<td>{inn.get(i, '–')}</td>" for i in inn_nums)
-        cells += (f"<td class='total'>{tot.get('R','–')}</td>"
-                  f"<td class='total'>{tot.get('H','–')}</td>"
-                  f"<td class='total'>{tot.get('E','–')}</td>")
-        rows += f"<tr>{cells}</tr>"
-    st.markdown(f"<div class='linescore-wrap'><table class='linescore'>"
-                f"<thead><tr>{hdr}</tr></thead><tbody>{rows}</tbody></table></div>",
-                unsafe_allow_html=True)
+    # Method 1: look for the standard npb game result table rows
+    # Each game is a <tr> inside a results table, with td elements for teams/scores
+    game_blocks = soup.select("div.largeScore, div.scoreBoard, table.scoreTable tr.game")
 
+    if not game_blocks:
+        # Method 2: find by the pattern of team name links next to score spans
+        # The page layout has a section per game with home/away teams
+        # Look for divs that contain both team names and a score separator
+        game_blocks = soup.select("section.gameSection, div.gameBlock, li.gameRow")
 
-def render_simple_score_table(away: str, home: str, as_d: str, hs_d: str,
-                               ah: str, hh: str, ae: str, he: str):
-    show_rhe = any([ah, hh, ae, he])
-    if show_rhe:
-        hdr = "<th class='team-col'></th><th class='total'>R</th><th class='total'>H</th><th class='total'>E</th>"
-        rows = (f"<tr><td class='team-col'>{away[:14]}</td>"
-                f"<td class='total'>{as_d}</td><td class='total'>{ah or '–'}</td><td class='total'>{ae or '–'}</td></tr>"
-                f"<tr><td class='team-col'>{home[:14]}</td>"
-                f"<td class='total'>{hs_d}</td><td class='total'>{hh or '–'}</td><td class='total'>{he or '–'}</td></tr>")
-    else:
-        hdr  = "<th class='team-col'></th><th class='total'>R</th>"
-        rows = (f"<tr><td class='team-col'>{away[:14]}</td><td class='total'>{as_d}</td></tr>"
-                f"<tr><td class='team-col'>{home[:14]}</td><td class='total'>{hs_d}</td></tr>")
-    st.markdown(f"<div class='linescore-wrap'><table class='linescore'>"
-                f"<thead><tr>{hdr}</tr></thead><tbody>{rows}</tbody></table></div>",
-                unsafe_allow_html=True)
+    if not game_blocks:
+        # Method 3: parse the raw structure — npb.jp uses a specific layout
+        # Each game is wrapped in a container; teams are in <p> or <span class="teamName">
+        # Scores are in <span class="score"> or <strong>
+        # Fall back to finding all score-like patterns in the page
+        score_pattern = soup.find_all(string=re.compile(r"^\s*\d+\s*$"))
 
+        # Last resort: find game containers by looking for venue/stadium references
+        containers = []
+        for tag in soup.find_all(["div", "section", "article"]):
+            text = tag.get_text(" ", strip=True)
+            # A game block will have two team names and either a score or a time
+            if re.search(r"\d+:\d+", text) or re.search(r"\d+\s*[-–]\s*\d+", text):
+                if len(text) < 400:  # avoid matching the whole page
+                    containers.append(tag)
+        game_blocks = containers[:12]  # cap at 12 games max
 
-# ── LINEUP ────────────────────────────────────────────────────────────────────
-def render_lineup(lineup: list, home: str, away: str, league: str):
-    if not lineup:
-        st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:.65rem;"
-                    "color:#2e2e2e;padding:6px 0'>No lineup data available.</div>",
-                    unsafe_allow_html=True)
-        return
-    away_p, home_p = [], []
-    for p in lineup:
-        team = p.get("strTeam", "")
-        (home_p if home[:5].lower() in team.lower() else away_p).append(p)
-    if not away_p and not home_p:
-        mid = len(lineup) // 2
-        away_p, home_p = lineup[:mid], lineup[mid:]
+    # Parse whichever blocks we found
+    for block in game_blocks:
+        text = block.get_text(" ", strip=True)
+        # Extract teams (capitalized words) and scores (digits)
+        # This is a best-effort parse; npb.jp structure is consistent enough
+        teams = re.findall(r"([A-Z][a-zA-Z\-]+(?:\s[A-Z][a-zA-Z\-]+)*)", text)
+        scores = re.findall(r"\b(\d{1,2})\b", text)
+        time_m = re.search(r"(\d{1,2}:\d{2})", text)
+        venue_tag = block.find(class_=re.compile(r"stadium|venue|ball.?park", re.I))
+        venue = venue_tag.get_text(strip=True) if venue_tag else ""
 
-    def row(p):
-        name  = p.get("strPlayer") or p.get("strName") or "Unknown"
-        pos   = p.get("strPosition", "")
-        num   = p.get("strNumber", "")
-        num_s = f"<span style='color:#2a2a2a;font-size:.6rem;margin-right:4px'>#{num}</span>" if num else ""
-        pos_s = f"<span style='color:#2a2a2a;font-size:.6rem;margin-left:4px'>{pos}</span>" if pos else ""
-        return (f"<div style='padding:5px 0;border-bottom:1px solid #141414;font-size:.82rem'>"
-                f"{num_s}<span style='color:#ccc'>{name}</span>{pos_s}</div>")
+        if len(teams) >= 2 and len(scores) >= 2:
+            games.append({
+                "away": teams[0], "home": teams[1],
+                "away_score": scores[0], "home_score": scores[1],
+                "venue": venue, "time": time_m.group(1) if time_m else "",
+                "status": "FINAL", "detail_url": url,
+            })
+        elif len(teams) >= 2 and time_m:
+            games.append({
+                "away": teams[0], "home": teams[1],
+                "away_score": None, "home_score": None,
+                "venue": venue, "time": time_m.group(1),
+                "status": "SCHEDULED", "detail_url": url,
+            })
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown(f"<div class='section-label'>{away[:20]}</div>", unsafe_allow_html=True)
-        st.markdown("".join(row(p) for p in away_p) or
-                    "<div style='color:#2a2a2a;font-size:.7rem'>—</div>",
-                    unsafe_allow_html=True)
-    with c2:
-        st.markdown(f"<div class='section-label'>{home[:20]}</div>", unsafe_allow_html=True)
-        st.markdown("".join(row(p) for p in home_p) or
-                    "<div style='color:#2a2a2a;font-size:.7rem'>—</div>",
-                    unsafe_allow_html=True)
-
-
-# ── EXTERNAL LINKS ────────────────────────────────────────────────────────────
-def build_links(league: str, date_str: str, home: str, away: str) -> str:
-    year      = date_str[:4] if date_str else CURRENT_YEAR
-    date_dash = date_str
-
-    if league == "NPB":
-        npb_results = f"https://npb.jp/bis/eng/{year}/games/"
-        bbref_sched = f"https://www.baseball-reference.com/leagues/NPB/{year}-schedule.shtml"
-        return (
-            f'<a class="ext-link" href="{npb_results}" target="_blank">NPB.jp Results</a>'
-            f'<a class="ext-link" href="{bbref_sched}" target="_blank">BBRef Schedule</a>'
-        )
-    else:
-        mykbo       = f"https://mykbostats.com/games/{date_dash}"
-        bbref_sched = f"https://www.baseball-reference.com/leagues/KBO/{year}-schedule.shtml"
-        kbo_center  = "https://eng.koreabaseball.com/Schedule/GameCenter/Main.aspx"
-        return (
-            f'<a class="ext-link" href="{mykbo}" target="_blank">MyKBOStats</a>'
-            f'<a class="ext-link" href="{kbo_center}" target="_blank">KBO Game Center</a>'
-            f'<a class="ext-link" href="{bbref_sched}" target="_blank">BBRef Schedule</a>'
+    if not games:
+        return [], (
+            "Could not parse games from NPB.jp for this date. "
+            "The page may use JavaScript rendering or the layout may have changed. "
+            "Check the source directly: " + url
         )
 
+    return games, ""
 
-# ── SCORE CARD ────────────────────────────────────────────────────────────────
-def render_score_card(ev: dict, league: str):
-    home     = ev.get("strHomeTeam", "?")
-    away     = ev.get("strAwayTeam", "?")
-    hs       = ev.get("intHomeScore")
-    as_      = ev.get("intAwayScore")
-    date_str = ev.get("dateEvent", "")
-    venue    = ev.get("strVenue", "") or ""
-    eid      = ev.get("idEvent", "")
-    status   = ev.get("strStatus", "") or ""
-    final    = hs is not None and as_ is not None
 
-    hc, ac = winner_cls(hs, as_)
-    hs_d = str(hs) if final else "–"
+@st.cache_data(ttl=300)
+def fetch_npb_games_v2(date_str: str) -> tuple[list, str]:
+    """
+    Improved NPB scraper targeting the actual npb.jp HTML structure.
+    npb.jp game pages have a very specific table layout:
+      - Game rows contain: away_team | away_score | '-' | home_score | home_team | venue | time/status
+    """
+    year = date_str[:4]
+    compact = date_str.replace("-", "")
+    url = f"https://npb.jp/bis/eng/{year}/games/gm{compact}.html"
+
+    try:
+        r = requests.get(url, headers={**HEADERS, "Referer": "https://npb.jp/bis/eng/"}, timeout=12)
+        if r.status_code == 404:
+            return [], f"No games found for {fmt_date(date_str)} (off-day or pre-season)."
+        if r.status_code != 200:
+            return [], f"NPB.jp returned HTTP {r.status_code}."
+    except Exception as e:
+        return [], f"Could not reach NPB.jp: {e}"
+
+    soup = BeautifulSoup(r.text, "lxml")
+    games = []
+
+    # npb.jp uses a <div id="contentsMain"> with game score blocks
+    # Each game: <div class="scoreWrap"> or similar, containing team names + scores
+    # The English page at gm*.html has a consistent table-based layout
+
+    # Find all tables in the main content
+    main = soup.find(id="contentsMain") or soup.find(id="contents") or soup.body
+
+    # Look for the score tables — they have a specific pattern:
+    # TD with team name, TD with score digits, TD with '-', TD with score, TD with team name
+    all_rows = main.find_all("tr") if main else []
+
+    i = 0
+    current_venue = ""
+    current_time = ""
+
+    for row in all_rows:
+        cells = row.find_all("td")
+        if not cells:
+            continue
+
+        texts = [c.get_text(strip=True) for c in cells]
+        full_row = " ".join(texts)
+
+        # Detect venue/time row (contains stadium name + time like "18:00")
+        time_m = re.search(r"(\d{1,2}:\d{2})", full_row)
+        if time_m and len(cells) <= 3:
+            current_time = time_m.group(1)
+            current_venue = texts[0] if texts else ""
+            continue
+
+        # Detect score row: should have at least 4 cells with team-score-sep-score-team pattern
+        if len(cells) >= 4:
+            # Check if any cell looks like a score (1-2 digit number)
+            score_cells = [t for t in texts if re.match(r"^\d{1,2}$", t)]
+            # Check if we have two team-like names
+            team_cells = [t for t in texts if len(t) > 2 and not re.match(r"^[\d\-–]+$", t)]
+
+            if len(score_cells) >= 2 and len(team_cells) >= 2:
+                away_team = team_cells[0]
+                home_team = team_cells[1]
+                away_score = score_cells[0]
+                home_score = score_cells[1]
+
+                games.append({
+                    "away": away_team,
+                    "home": home_team,
+                    "away_score": away_score,
+                    "home_score": home_score,
+                    "venue": current_venue,
+                    "time": current_time,
+                    "status": "FINAL",
+                    "detail_url": url,
+                })
+                current_venue = ""
+                current_time = ""
+
+    # If table parsing found nothing, try div-based parsing
+    if not games:
+        # npb.jp wraps each game in a div with class like "scoreBoard" or "gameScore"
+        for div in (main.find_all("div") if main else []):
+            cls = " ".join(div.get("class", []))
+            if not re.search(r"score|game|match", cls, re.I):
+                continue
+            text = div.get_text(" ", strip=True)
+            if len(text) > 300 or len(text) < 10:
+                continue
+
+            teams = [w for w in re.findall(r"[A-Z][a-z]+(?:[A-Z][a-z]+|\s[A-Z][a-z]+)*", text)
+                     if len(w) > 3]
+            scores = re.findall(r"\b(\d{1,2})\b", text)
+            time_m = re.search(r"(\d{1,2}:\d{2})", text)
+
+            if len(teams) >= 2 and len(scores) >= 2:
+                games.append({
+                    "away": teams[0], "home": teams[1],
+                    "away_score": scores[0], "home_score": scores[1],
+                    "venue": "", "time": "",
+                    "status": "FINAL", "detail_url": url,
+                })
+            elif len(teams) >= 2 and time_m:
+                games.append({
+                    "away": teams[0], "home": teams[1],
+                    "away_score": None, "home_score": None,
+                    "venue": "", "time": time_m.group(1),
+                    "status": "SCHEDULED", "detail_url": url,
+                })
+
+    if not games:
+        return [], (
+            f"Scraped NPB.jp but could not extract game data for {fmt_date(date_str)}. "
+            f"The page structure may have changed — check directly: {url}"
+        )
+
+    return games, ""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# KBO  —  scrape mykbostats.com
+# ══════════════════════════════════════════════════════════════════════════════
+@st.cache_data(ttl=300)
+def fetch_kbo_games(date_str: str) -> tuple[list, str]:
+    """
+    Scrape mykbostats.com/games/YYYY-MM-DD
+    Returns (games_list, error_msg)
+    """
+    url = f"https://mykbostats.com/games/{date_str}"
+
+    try:
+        r = requests.get(url, headers={**HEADERS, "Referer": "https://mykbostats.com/"}, timeout=12)
+        if r.status_code == 404:
+            return [], f"No KBO games found for {fmt_date(date_str)}."
+        if r.status_code != 200:
+            return [], f"MyKBOStats returned HTTP {r.status_code}."
+    except Exception as e:
+        return [], f"Could not reach MyKBOStats: {e}"
+
+    soup = BeautifulSoup(r.text, "lxml")
+    games = []
+
+    # mykbostats.com game cards have a consistent structure:
+    # <div class="game-card"> or <div class="game"> containing:
+    #   - away team name + score
+    #   - home team name + score
+    #   - status (Final / time)
+    #   - venue
+
+    game_cards = soup.select("div.game-card, div.game-box, article.game, div.game")
+
+    if not game_cards:
+        # Try table-based layout
+        game_cards = soup.select("table.games tr.game-row, tr.game")
+
+    if not game_cards:
+        # Broad fallback: find divs that look like game containers
+        for div in soup.find_all("div"):
+            cls = " ".join(div.get("class", []))
+            if re.search(r"game", cls, re.I) and 20 < len(div.get_text(strip=True)) < 300:
+                game_cards.append(div)
+
+    for card in game_cards:
+        text = card.get_text(" ", strip=True)
+
+        # Extract team names and scores
+        # mykbostats typically shows: "TeamA  5  TeamB  3  Final"
+        # or "TeamA  TeamB  7:00 PM KST"
+        
+        # Try to find score pattern: digits surrounded by team names
+        score_m = re.search(
+            r"([A-Za-z][A-Za-z\s]+?)\s+(\d{1,2})\s+([A-Za-z][A-Za-z\s]+?)\s+(\d{1,2})\s*(Final|F\b)?",
+            text, re.IGNORECASE
+        )
+        sched_m = re.search(
+            r"([A-Za-z][A-Za-z\s]+?)\s+(?:@|vs\.?)\s+([A-Za-z][A-Za-z\s]+?)\s+(\d{1,2}:\d{2})",
+            text, re.IGNORECASE
+        )
+        time_m = re.search(r"(\d{1,2}:\d{2}\s*(?:AM|PM)?(?:\s*KST)?)", text, re.IGNORECASE)
+
+        # Look for team name elements specifically
+        team_els = card.select(".team-name, .team, span.name, a.team")
+        score_els = card.select(".score, span.score, td.score")
+        status_el = card.select_one(".status, .game-status, .result")
+
+        if team_els and len(team_els) >= 2:
+            away = team_els[0].get_text(strip=True)
+            home = team_els[1].get_text(strip=True)
+            scores = [s.get_text(strip=True) for s in score_els if re.match(r"^\d+$", s.get_text(strip=True))]
+            status_text = status_el.get_text(strip=True) if status_el else ""
+            final = bool(re.search(r"final|f\b", status_text, re.I))
+
+            if len(scores) >= 2:
+                games.append({
+                    "away": away, "home": home,
+                    "away_score": scores[0], "home_score": scores[1],
+                    "venue": "", "time": "",
+                    "status": "FINAL" if final else status_text,
+                    "detail_url": url,
+                })
+            elif time_m:
+                games.append({
+                    "away": away, "home": home,
+                    "away_score": None, "home_score": None,
+                    "venue": "", "time": time_m.group(1),
+                    "status": "SCHEDULED", "detail_url": url,
+                })
+        elif score_m:
+            games.append({
+                "away": score_m.group(1).strip(),
+                "home": score_m.group(3).strip(),
+                "away_score": score_m.group(2),
+                "home_score": score_m.group(4),
+                "venue": "", "time": "",
+                "status": "FINAL", "detail_url": url,
+            })
+        elif sched_m:
+            games.append({
+                "away": sched_m.group(1).strip(),
+                "home": sched_m.group(2).strip(),
+                "away_score": None, "home_score": None,
+                "venue": "", "time": sched_m.group(3),
+                "status": "SCHEDULED", "detail_url": url,
+            })
+
+    if not games:
+        return [], (
+            f"Scraped MyKBOStats but could not extract game data for {fmt_date(date_str)}. "
+            f"Check directly: {url}"
+        )
+
+    return games, ""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RENDER
+# ══════════════════════════════════════════════════════════════════════════════
+def render_game_card(g: dict, league: str, date_str: str):
+    away  = g.get("away", "?")
+    home  = g.get("home", "?")
+    as_   = g.get("away_score")
+    hs    = g.get("home_score")
+    venue = g.get("venue", "")
+    time_ = g.get("time", "")
+    status = g.get("status", "")
+    detail = g.get("detail_url", "")
+    final  = as_ is not None and hs is not None
+
+    ac, hc = winner_cls(as_, hs) if final else ("neutral", "neutral")
     as_d = str(as_) if final else "–"
+    hs_d = str(hs) if final else "–"
 
     if final:
         status_label = "FINAL"
-    elif status.upper() in ("IN PROGRESS", "LIVE", "INPROGRESS"):
-        status_label = f"LIVE · {status}"
+    elif status.upper() in ("LIVE", "IN PROGRESS", "INPROGRESS"):
+        status_label = f"🔴 LIVE"
+    elif time_:
+        status_label = f"{time_} JST" if league == "NPB" else f"{time_} KST"
     else:
-        time_ = ev.get("strTime", "")
-        status_label = utc_to_jst(date_str, time_) if time_ else "SCHEDULED"
+        status_label = status or "SCHEDULED"
 
-    links = build_links(league, date_str, home, away)
+    year = date_str[:4]
+    if league == "NPB":
+        links = (
+            f'<a class="ext-link" href="https://npb.jp/bis/eng/{year}/games/" target="_blank">NPB.jp</a>'
+            f'<a class="ext-link" href="https://www.baseball-reference.com/leagues/NPB/{year}-schedule.shtml" target="_blank">BBRef</a>'
+        )
+    else:
+        links = (
+            f'<a class="ext-link" href="https://mykbostats.com/games/{date_str}" target="_blank">MyKBOStats</a>'
+            f'<a class="ext-link" href="https://eng.koreabaseball.com/Schedule/GameCenter/Main.aspx" target="_blank">KBO Center</a>'
+            f'<a class="ext-link" href="https://www.baseball-reference.com/leagues/KBO/{year}-schedule.shtml" target="_blank">BBRef</a>'
+        )
+
+    venue_html = f"<div class='card-venue'>{venue}</div>" if venue else ""
 
     st.markdown(f"""
     <div class="card">
-      <div class="card-venue">{venue}</div>
+      {venue_html}
       <div class="card-teams">
         <div class="team-block">
           <div class="team-name {ac}">{away}</div>
@@ -399,109 +484,44 @@ def render_score_card(ev: dict, league: str):
       </div>
     </div>""", unsafe_allow_html=True)
 
-    if final and eid:
-        with st.expander(f"Box score — {away} @ {home}"):
-            st.markdown("<div class='section-label'>linescore</div>", unsafe_allow_html=True)
-            stats  = fetch_event_stats(eid)
-            ls     = parse_linescore(stats, home, away)
-            if ls:
-                render_linescore(ls)
-            else:
-                detail = fetch_event_detail(eid)
-                hh = detail.get("intHomeHits",   "") or ""
-                ah = detail.get("intAwayHits",   "") or ""
-                he = detail.get("intHomeErrors", "") or ""
-                ae = detail.get("intAwayErrors", "") or ""
-                render_simple_score_table(away, home, as_d, hs_d, ah, hh, ae, he)
-                st.markdown(
-                    "<div style='font-family:IBM Plex Mono,monospace;font-size:.6rem;"
-                    "color:#2a2a2a;margin-top:6px'>Inning-by-inning data not available "
-                    "for this game — use the external links above for a full box score.</div>",
-                    unsafe_allow_html=True)
 
-            st.markdown("<div class='section-label' style='margin-top:12px'>lineup / players</div>",
-                        unsafe_allow_html=True)
-            render_lineup(fetch_event_lineup(eid), home, away, league)
-
-
-# ── SCHEDULE CARD ─────────────────────────────────────────────────────────────
-def render_sched_card(ev: dict, league: str):
-    home  = ev.get("strHomeTeam", "?")
-    away  = ev.get("strAwayTeam", "?")
-    date  = ev.get("dateEvent", "")
-    time_ = ev.get("strTime", "")
-    venue = ev.get("strVenue", "")
-    time_disp = utc_to_jst(date, time_)
-    venue_str = f"<div class='sched-venue'>{venue}</div>" if venue else ""
-
+def scores_page(league: str, date_str: str):
     if league == "NPB":
-        year = date[:4] if date else CURRENT_YEAR
-        quick_link = f'<a class="ext-link" href="https://npb.jp/bis/eng/{year}/games/" target="_blank">NPB.jp</a>'
+        with st.spinner("Fetching NPB scores from NPB.jp…"):
+            games, err = fetch_npb_games_v2(date_str)
     else:
-        quick_link = f'<a class="ext-link" href="https://mykbostats.com/games/{date}" target="_blank">MyKBOStats</a>'
+        with st.spinner("Fetching KBO scores from MyKBOStats…"):
+            games, err = fetch_kbo_games(date_str)
 
-    st.markdown(f"""
-    <div class="sched-card">
-      <div class="sched-matchup">
-        <div>
-          <div class="sched-teams">{away}<span class="sched-at">@</span>{home}</div>
-          {venue_str}
-        </div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-          <div class="sched-time">{time_disp}</div>
-          {quick_link}
-        </div>
-      </div>
-    </div>""", unsafe_allow_html=True)
-
-
-# ── SCORES PAGE ───────────────────────────────────────────────────────────────
-def scores_page(teams: dict, league: str, league_id: str, date_str: str):
-    games = get_games_on_date(teams, league_id, date_str)
-    if not games:
-        st.markdown(
-            f"<div class='no-games'>No {league} games found for {fmt_display_date(date_str)}<br>"
-            f"<span style='font-size:.6rem'>Try yesterday or a different date — "
-            f"TSDB data may lag 12–24 hours</span></div>",
-            unsafe_allow_html=True)
-        return
-    for ev in games:
-        render_score_card(ev, league)
-
-
-# ── SCHEDULE PAGE ─────────────────────────────────────────────────────────────
-def schedule_page(teams: dict, league: str, league_id: str):
-    jst_now = now_jst()
-    today_s = jst_now.strftime("%Y-%m-%d")
-    tmrw_s  = (jst_now + timedelta(days=1)).strftime("%Y-%m-%d")
-
-    by_date = get_upcoming_games(teams, league_id)
-    by_date = {d: v for d, v in by_date.items() if d >= today_s}
-
-    if not by_date:
-        st.markdown(f"<div class='no-games'>No upcoming {league} schedule data available</div>",
-                    unsafe_allow_html=True)
-        return
-
-    for d in sorted(by_date.keys()):
-        if d == today_s:
-            label = f"Today — {fmt_display_date(d)}"
-        elif d == tmrw_s:
-            label = f"Tomorrow — {fmt_display_date(d)}"
+    if err:
+        st.markdown(f"<div class='err-box'>⚠ {err}</div>", unsafe_allow_html=True)
+        # Show fallback link
+        year = date_str[:4]
+        if league == "NPB":
+            compact = date_str.replace("-", "")
+            fb_url = f"https://npb.jp/bis/eng/{year}/games/gm{compact}.html"
+            st.markdown(f"[View on NPB.jp directly ↗]({fb_url})")
         else:
-            label = fmt_display_date(d)
-        st.markdown(f"<div class='sched-date-hdr'>{label}</div>", unsafe_allow_html=True)
-        for ev in by_date[d]:
-            render_sched_card(ev, league)
+            st.markdown(f"[View on MyKBOStats directly ↗](https://mykbostats.com/games/{date_str})")
+
+    if not games and not err:
+        st.markdown(
+            f"<div class='no-games'>No {league} games found for {fmt_date(date_str)}</div>",
+            unsafe_allow_html=True
+        )
+        return
+
+    for g in games:
+        render_game_card(g, league, date_str)
 
 
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
 # MAIN
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
 st.markdown("""
 <div class="masthead">
   <div class="masthead-title">NPB · KBO</div>
-  <div class="masthead-sub">Scores · Schedule · Box Scores</div>
+  <div class="masthead-sub">Scores &amp; Schedule</div>
 </div>""", unsafe_allow_html=True)
 
 jst_now = now_jst()
@@ -509,7 +529,7 @@ jst_now = now_jst()
 c1, c2, c3 = st.columns([3, 1, 1])
 with c1:
     selected_date = st.date_input(
-        "Date (JST)",
+        "Date",
         value=(jst_now - timedelta(days=1)).date(),
         max_value=jst_now.date(),
         min_value=date_type(2020, 1, 1),
@@ -518,9 +538,10 @@ with c1:
     )
     selected_str = selected_date.strftime("%Y-%m-%d")
 with c2:
-    st.markdown(f"<div style='font-family:IBM Plex Mono,monospace;font-size:.62rem;"
-                f"color:#333;padding-top:10px'>JST {jst_now.strftime('%H:%M')}</div>",
-                unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='font-family:IBM Plex Mono,monospace;font-size:.62rem;color:#333;padding-top:10px'>"
+        f"JST {jst_now.strftime('%H:%M')}</div>", unsafe_allow_html=True
+    )
 with c3:
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
     if st.button("↻ Refresh", use_container_width=True):
@@ -530,41 +551,38 @@ with c3:
 today_s     = jst_now.strftime("%Y-%m-%d")
 yesterday_s = (jst_now - timedelta(days=1)).strftime("%Y-%m-%d")
 if selected_str == today_s:
-    dlabel = f"Today · {fmt_display_date(selected_str)}"
+    dlabel = f"Today · {fmt_date(selected_str)}"
 elif selected_str == yesterday_s:
-    dlabel = f"Yesterday · {fmt_display_date(selected_str)}"
+    dlabel = f"Yesterday · {fmt_date(selected_str)}"
 else:
-    dlabel = fmt_display_date(selected_str)
-st.markdown(f"<div class='section-label' style='margin-bottom:.8rem'>{dlabel}</div>",
-            unsafe_allow_html=True)
+    dlabel = fmt_date(selected_str)
+
+st.markdown(
+    f"<div class='section-label' style='margin-bottom:.8rem'>{dlabel}</div>",
+    unsafe_allow_html=True
+)
 
 st.markdown("""
-<div class='warn-box'>
-  Data via TheSportsDB free API — fetches last 5 results per team to build each day's slate.<br>
-  Results may lag 12–24 hours. Inning-by-inning box scores depend on TSDB coverage for each game.<br>
-  Use the external links on each card for full box scores on official / third-party sites.
+<div class='err-box'>
+  Data scraped from <strong>NPB.jp</strong> (official) and <strong>MyKBOStats.com</strong> —
+  no API key required. Results update every 5 min. Use the links on each card for full box scores.
 </div>""", unsafe_allow_html=True)
 
-t_npb, t_kbo, t_npb_s, t_kbo_s = st.tabs([
-    "\U0001f1ef\U0001f1f5  NPB Scores", "\U0001f1f0\U0001f1f7  KBO Scores",
-    "\U0001f1ef\U0001f1f5  NPB Schedule", "\U0001f1f0\U0001f1f7  KBO Schedule",
+t_npb, t_kbo = st.tabs([
+    "🇯🇵  NPB Scores",
+    "🇰🇷  KBO Scores",
 ])
 
 with t_npb:
-    scores_page(NPB_TEAMS, "NPB", NPB_LEAGUE_ID, selected_str)
+    scores_page("NPB", selected_str)
 
 with t_kbo:
-    scores_page(KBO_TEAMS, "KBO", KBO_LEAGUE_ID, selected_str)
-
-with t_npb_s:
-    schedule_page(NPB_TEAMS, "NPB", NPB_LEAGUE_ID)
-
-with t_kbo_s:
-    schedule_page(KBO_TEAMS, "KBO", KBO_LEAGUE_ID)
+    scores_page("KBO", selected_str)
 
 st.markdown("---")
 st.markdown(
-    "<span style='font-family:IBM Plex Mono,monospace;font-size:.58rem;color:#222;letter-spacing:.1em'>"
-    f"Data: TheSportsDB · All times JST (UTC+9) · {CURRENT_YEAR} season · "
-    "Score cache 5 min · Schedule cache 10 min</span>",
-    unsafe_allow_html=True)
+    f"<span style='font-family:IBM Plex Mono,monospace;font-size:.58rem;color:#222;letter-spacing:.1em'>"
+    f"Sources: NPB.jp · MyKBOStats.com · Cache: 5 min · "
+    f"{datetime.now(JST).year} season</span>",
+    unsafe_allow_html=True
+)
