@@ -57,6 +57,7 @@ html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; backgroun
 .boxscore td.ppos { text-align:left; color:#3a3a3a; min-width:42px; }
 .player-link { color:#9aa6b2; text-decoration:none; border-bottom:1px dotted #2c3338; }
 .player-link:hover { color:#e0e0e0; border-color:#888; }
+.player-plain { color:#777; }
 .notes-line { font-family:'IBM Plex Mono',monospace; font-size:.62rem; color:#555; letter-spacing:.05em; margin:3px 0; line-height:1.6; }
 .notes-key { color:#777; font-weight:600; }
 .no-games { font-family:'IBM Plex Mono',monospace; font-size:.75rem; color:#2a2a2a; letter-spacing:.12em; padding:28px 0; text-align:center; border:1px dashed #181818; border-radius:6px; margin:8px 0; }
@@ -86,7 +87,7 @@ def now_jst():
     return datetime.now(JST)
 
 def fmt_date(d: str) -> str:
-    # NOTE: avoid "%-d" — it's Linux-only and crashes on Windows
+    # NOTE: avoid "%-d" — Linux-only, crashes on Windows
     try:
         dt = datetime.strptime(d, "%Y-%m-%d")
         return f"{dt.strftime('%A, %B')} {dt.day}"
@@ -107,38 +108,130 @@ def get(url, referer="https://npb.jp/"):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PLAYER LINKS
+# PLAYER LINKS — Baseball Reference
 #
-# Baseball Reference is used (rather than FanGraphs) because BR's Register
-# covers virtually every NPB and KBO player, while FanGraphs has no NPB
-# player pages at all and only partial KBO coverage. We link to BR's search
-# endpoint so no player-ID mapping is needed — BR resolves the name itself
-# (and lands directly on the player page when the name is unambiguous).
-# These links open in the USER'S browser, so Cloudflare datacenter-IP
-# blocking is not a concern here.
+# BR is used (not FanGraphs) because BR's Register covers essentially every NPB
+# and KBO player while FanGraphs has no NPB pages. We link to BR's search
+# endpoint with the player's name; BR resolves it (landing on the player page
+# when unambiguous). BR's player pages/titles use romanized GIVEN-name-first
+# order ("Koki Kitayama"), so passing the full name — not a bare surname —
+# is what makes the search land on the right person.
+#
+# Links open in the USER'S browser, so Cloudflare datacenter-IP blocking of
+# baseball-reference.com is irrelevant here.
 # ══════════════════════════════════════════════════════════════════════════════
 
-def br_player_link(name: str, display: str | None = None) -> str:
-    """Return an <a> tag linking a player name to Baseball Reference search."""
-    clean = re.sub(r"\s+", " ", name).strip()
-    if not clean:
-        return display or name
-    url = "https://www.baseball-reference.com/search/search.fcgi?search=" + quote(clean)
-    return f'<a class="player-link" href="{url}" target="_blank">{display or clean}</a>'
+def br_search_url(name: str) -> str:
+    return "https://www.baseball-reference.com/search/search.fcgi?search=" + quote(name.strip())
+
+def br_link(search_name: str, display: str) -> str:
+    """Anchor linking `display` text to a BR search for `search_name`."""
+    if not search_name.strip():
+        return f'<span class="player-plain">{display}</span>'
+    return (f'<a class="player-link" href="{br_search_url(search_name)}" '
+            f'target="_blank">{display}</a>')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 1 — scrape the day-index page to get individual game links
-# URL: https://npb.jp/bis/eng/YYYY/games/gmYYYYMMDD.html
-# These pages contain <a href="sYYYYMMDDnnnnn.html"> links for each game
+# NPB FULL-NAME REGISTER
+#
+# Problem: NPB.jp box scores print only surnames ("Kitayama", "Kiyomiya"),
+# which makes BR searches unreliable (many players share a surname).
+#
+# Solution: NPB.jp publishes an alphabetical ACTIVE-PLAYER register at
+#   https://npb.jp/bis/eng/players/active/index_{a..z}.html
+# Each entry is:  "{num} {Position}[ (*)]{Surname}, {Given}{Full Team Name}"
+# linking to that player's NPB page. We fetch all 26 letter pages ONCE
+# (cached 24h) and build  (team_short, surname_lower) -> [candidates].
+#
+# A box-score row gives us the surname AND the team (from the team-label
+# table), so we match on (team, surname). When exactly one player matches we
+# expand to the full name for the BR link; when 0 or >1 match (e.g. two
+# "Kikuchi" on Hiroshima) we fall back to searching the surname alone.
+#
+# Same npb.jp domain that already works server-side — no new blocking risk.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Full register team name  ->  short label used in box scores / linescore
+NPB_TEAM_TO_SHORT = {
+    "Yomiuri Giants": "Yomiuri",
+    "Hanshin Tigers": "Hanshin",
+    "YOKOHAMA DeNA BAYSTARS": "DeNA",
+    "Yokohama DeNA BayStars": "DeNA",
+    "Chunichi Dragons": "Chunichi",
+    "Hiroshima Toyo Carp": "Hiroshima",
+    "Tokyo Yakult Swallows": "Yakult",
+    "Fukuoka SoftBank Hawks": "SoftBank",
+    "Fukuoka Softbank Hawks": "SoftBank",
+    "Hokkaido Nippon-Ham Fighters": "Nippon-Ham",
+    "ORIX Buffaloes": "ORIX",
+    "Tohoku Rakuten Golden Eagles": "Rakuten",
+    "Saitama Seibu Lions": "Seibu",
+    "Chiba Lotte Marines": "Lotte",
+}
+
+_NPB_TEAMS_ALT = "|".join(
+    sorted((re.escape(t) for t in NPB_TEAM_TO_SHORT), key=len, reverse=True)
+)
+# Anchor text format inside the register, e.g.:
+#   <a href=".../51755155.html">15 PitcherKitayama, KokiHokkaido Nippon-Ham Fighters</a>
+_REGISTER_ENTRY = re.compile(
+    r'href="(?P<url>https?://npb\.jp/bis/eng/players/\d+\.html)"[^>]*>\s*'
+    r'\d+\s+(?:Pitcher|Catcher|Infielder|Outfielder)(?:\s*\(\*\))?\s*'
+    r'(?P<surname>[^,<]+?),\s*(?P<given>[A-Za-z\'\-\. ]+?)'
+    r'(?P<team>' + _NPB_TEAMS_ALT + r')\s*<',
+    re.IGNORECASE,
+)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def load_npb_register() -> dict:
+    """
+    Returns { f"{team_short}|{surname_lower}": [ {full, url}, ... ] }.
+    Fetched once per day. Tolerant of individual page failures.
+    """
+    reg: dict[str, list[dict]] = {}
+    for letter in "abcdefghijklmnopqrstuvwxyz":
+        url = f"https://npb.jp/bis/eng/players/active/index_{letter}.html"
+        try:
+            r = get(url)
+            if r.status_code != 200:
+                continue
+        except Exception:
+            continue
+        for m in _REGISTER_ENTRY.finditer(r.text):
+            surname = m.group("surname").strip()
+            given   = m.group("given").strip()
+            team    = m.group("team")
+            short   = NPB_TEAM_TO_SHORT.get(team, team)
+            key     = f"{short}|{surname.lower()}"
+            entry   = {"full": f"{given} {surname}", "url": m.group("url")}
+            bucket  = reg.setdefault(key, [])
+            if entry not in bucket:
+                bucket.append(entry)
+    return reg
+
+
+def npb_full_name(register: dict, team_short: str, box_name: str):
+    """
+    Expand a box-score name ('Kitayama', 'K.Suzuki') to a full romanized
+    name using the register. Returns (search_name, confident).
+    - confident=True  -> search_name is the full 'Given Surname'
+    - confident=False -> search_name is just the surname (best-effort)
+    """
+    surname = box_name.split(".")[-1].strip()  # drop initial prefixes
+    cands = register.get(f"{team_short}|{surname.lower()}", [])
+    if len(cands) == 1:
+        return cands[0]["full"], True
+    return surname, False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NPB — STEP 1: day-index page -> individual game links
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=300)
 def get_npb_game_links(date_str: str) -> tuple[list[str], str]:
-    """
-    Returns (list_of_game_urls, error_msg).
-    Game URLs look like: https://npb.jp/bis/eng/2026/games/s2026052901848.html
-    """
     year    = date_str[:4]
     compact = date_str.replace("-", "")
     day_url = f"https://npb.jp/bis/eng/{year}/games/gm{compact}.html"
@@ -155,81 +248,51 @@ def get_npb_game_links(date_str: str) -> tuple[list[str], str]:
 
     soup  = BeautifulSoup(r.text, "lxml")
     base  = f"https://npb.jp/bis/eng/{year}/games/"
-
     game_links = []
     pattern    = re.compile(rf"s{compact}\d{{5}}\.html")
 
     for a in soup.find_all("a", href=True):
-        href = a["href"]
-        filename = href.split("/")[-1]
+        filename = a["href"].split("/")[-1]
         if pattern.match(filename):
-            full_url = base + filename if not href.startswith("http") else href
+            full_url = base + filename if not a["href"].startswith("http") else a["href"]
             if full_url not in game_links:
                 game_links.append(full_url)
-
-    if not game_links:
-        return [], ""
 
     return game_links, ""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 2 — scrape each individual game page
-# URL: https://npb.jp/bis/eng/YYYY/games/sYYYYMMDDnnnnn.html
+# NPB — STEP 2: parse each individual game page (scores, linescore, box, notes)
 #
-# Confirmed structure (live fetch of s2026060701896.html, Jun 7 2026):
-#
-#   Score block:  away team listed FIRST, then home team
-#   Venue line:   "Jingu | T - 2:33 ( 14:01 - 16:34 ) Att. - 29,328"
-#   Linescore:    "Nippon-Ham 2 0 0 0 4 1 0 0 0 - 7 9 1"
-#
-#   NEW — full box scores are on the SAME page (no extra requests):
-#
-#   Each team's box is preceded by a tiny one-cell table holding the team's
-#   SHORT name (e.g. "Nippon-Ham", "Yakult").
-#
-#   Batting table header row:  ["", "AB", "H", "RBI", "BB", "HP", "SO"]
-#   Batting player row:        ["Mizuno, SS", "5", "1", "0", "0", "0", "1"]
-#                              (name and position joined by comma; position
-#                               can be compound like "3B-1B" or "PH-CF")
-#
-#   Pitching table header row: ["", "IP", "", "BF", "H", "BB", "HB", "SO", "ER"]
-#                              (note the EXTRA blank column after IP — it holds
-#                               the fractional innings, e.g. "2/3")
-#   Pitching player row:       ["Kitayama, (W)", "9", "", "31", "4", "1", "0", "6", "1"]
-#
-#   Game notes rows:           first cell "WP :", "LP :", "S :", or "HR :",
-#                              second cell the detail; HR continuation rows
-#                              have an empty first cell.
+# Confirmed structure (live fetch s2026060701896.html, Jun 7 2026):
+#   away listed FIRST; venue "Jingu | T - 2:33 ( 14:01 - 16:34 ) Att. ..."
+#   linescore "Nippon-Ham 2 0 0 0 4 1 0 0 0 - 7 9 1"
+#   Each team's box preceded by a one-cell table with the team SHORT name.
+#   Batting header:  ["", AB, H, RBI, BB, HP, SO]
+#   Pitching header: ["", IP, "", BF, H, BB, HB, SO, ER]  (blank col = frac IP)
+#   Notes: first cell "WP :"/"LP :"/"S :"/"HR :"; HR continuation rows blank 1st.
 # ══════════════════════════════════════════════════════════════════════════════
 
 NPB_SHORT_NAMES = {
     "Yomiuri", "Hanshin", "DeNA", "Chunichi", "Hiroshima", "Yakult",
     "SoftBank", "Nippon-Ham", "ORIX", "Rakuten", "Seibu", "Lotte",
 }
-
-BAT_HEADER_KEYS = {"AB", "RBI"}      # must both appear in header row
-PIT_HEADER_KEYS = {"IP", "BF"}       # must both appear in header row
-
+BAT_HEADER_KEYS = {"AB", "RBI"}
+PIT_HEADER_KEYS = {"IP", "BF"}
 STAT_HEADER_WORDS = {"AB", "IP", "H", "R", "E", "BB", "SO", "HP",
                      "HB", "ER", "BF", "WP", "LP", "HR", "ERA", "RBI", "S"}
 
 
 def _direct_rows(tbl):
-    """All <tr> that are direct children of a table (or its thead/tbody)."""
     rows = tbl.find_all("tr", recursive=False)
     for section in tbl.find_all(["tbody", "thead"], recursive=False):
         rows += section.find_all("tr", recursive=False)
     return rows
 
-
 def _direct_cells(tr):
-    """Texts of direct-child th/td only — never descends into nested tables."""
     return [c.get_text(strip=True) for c in tr.find_all(["th", "td"], recursive=False)]
 
-
 def _split_player(name_cell: str) -> tuple[str, str]:
-    """'Mizuno, SS' -> ('Mizuno', 'SS');  'Kitayama, (W)' -> ('Kitayama', '(W)')"""
     if "," in name_cell:
         name, _, pos = name_cell.partition(",")
         return name.strip(), pos.strip()
@@ -238,26 +301,12 @@ def _split_player(name_cell: str) -> tuple[str, str]:
 
 @st.cache_data(ttl=300)
 def parse_npb_game(game_url: str) -> dict:
-    """
-    Returns a game dict with keys:
-      away, home, away_score, home_score, venue, time, status,
-      linescore (list of dicts: {team, innings[], r, h, e}),
-      batting   (list of {team, players:[{name,pos,stats[6]}]}),  away first
-      pitching  (list of {team, players:[{name,pos,stats: {ip,bf,h,bb,hb,so,er}}]}),
-      notes     (list of (key, text) like ("WP","Kitayama ( 5 - 2 )")),
-      game_url
-    """
     result = {
         "away": "", "home": "",
         "away_score": None, "home_score": None,
-        "venue": "", "time": "",
-        "status": "UNKNOWN",
-        "linescore": [],
-        "batting": [],
-        "pitching": [],
-        "notes": [],
-        "game_url": game_url,
-        "error": "",
+        "venue": "", "time": "", "status": "UNKNOWN",
+        "linescore": [], "batting": [], "pitching": [], "notes": [],
+        "game_url": game_url, "error": "",
     }
 
     try:
@@ -265,17 +314,13 @@ def parse_npb_game(game_url: str) -> dict:
     except Exception as e:
         result["error"] = str(e)
         return result
-
     if r.status_code != 200:
         result["error"] = f"HTTP {r.status_code}"
         return result
 
     soup = BeautifulSoup(r.text, "lxml")
 
-    # ── Team names + final scores ────────────────────────────────────────────
-    # (see original comments — recursive=False everywhere to dodge nested-table
-    #  duplication, <th> cells included because score cells are <th> not <td>)
-
+    # ── Team names + scores ──────────────────────────────────────────────────
     title   = soup.title.string if soup.title else ""
     title_m = re.search(r"\(Scores\)\s+(.+?)\s+vs\s+(.+?)(?:\s*\||\s*$)", title or "")
 
@@ -294,18 +339,14 @@ def parse_npb_game(game_url: str) -> dict:
         if "," in second_last or "(" in second_last:
             continue
         score_rows.append((second_last, last))
-
     score_rows = score_rows[:2]
 
     if len(score_rows) >= 2:
-        result["away"]       = score_rows[0][0]
-        result["home"]       = score_rows[1][0]
-        result["away_score"] = score_rows[0][1]
-        result["home_score"] = score_rows[1][1]
-        result["status"]     = "FINAL"
+        result["away"], result["home"] = score_rows[0][0], score_rows[1][0]
+        result["away_score"], result["home_score"] = score_rows[0][1], score_rows[1][1]
+        result["status"] = "FINAL"
     elif title_m:
-        result["away"]   = title_m.group(1).strip()
-        result["home"]   = title_m.group(2).strip()
+        result["away"], result["home"] = title_m.group(1).strip(), title_m.group(2).strip()
         result["status"] = "SCHEDULED"
 
     # ── Venue + time ─────────────────────────────────────────────────────────
@@ -316,68 +357,49 @@ def parse_npb_game(game_url: str) -> dict:
         row_text = " ".join(cells)
         if re.search(r"\d{1,2}:\d{2}", row_text) and len(cells) >= 2:
             venue_candidate = cells[0]
-            if not re.match(r"^(AB|IP|R|H|E|BB|SO|WP|LP|HR)$", venue_candidate):
-                if len(venue_candidate) > 2:
-                    result["venue"] = venue_candidate
-                    time_m = re.search(r"\(\s*(\d{1,2}:\d{2})\s*-", row_text)
-                    if time_m:
-                        result["time"] = time_m.group(1)
-                    break
+            if not re.match(r"^(AB|IP|R|H|E|BB|SO|WP|LP|HR)$", venue_candidate) and len(venue_candidate) > 2:
+                result["venue"] = venue_candidate
+                time_m = re.search(r"\(\s*(\d{1,2}:\d{2})\s*-", row_text)
+                if time_m:
+                    result["time"] = time_m.group(1)
+                break
 
     # ── Linescore ────────────────────────────────────────────────────────────
-    linescore   = []
-    seen_ls_ids = set()
+    linescore, seen_ls = [], set()
     for tbl in soup.find_all("table"):
         for row in _direct_rows(tbl):
-            row_id = id(row)
-            if row_id in seen_ls_ids:
+            if id(row) in seen_ls:
                 continue
-            seen_ls_ids.add(row_id)
+            seen_ls.add(id(row))
             text = row.get_text(" ", strip=True)
             ls_m = re.match(
-                r"^([A-Za-z][A-Za-z\-]+)\s+((?:\d+\s+)+)-\s+(\d+)\s+(\d+)\s+(\d+)\s*$",
-                text
-            )
+                r"^([A-Za-z][A-Za-z\-]+)\s+((?:\d+\s+)+)-\s+(\d+)\s+(\d+)\s+(\d+)\s*$", text)
             if ls_m:
-                linescore.append({
-                    "team":    ls_m.group(1),
-                    "innings": ls_m.group(2).split(),
-                    "r": ls_m.group(3),
-                    "h": ls_m.group(4),
-                    "e": ls_m.group(5),
-                })
-    if linescore:
-        result["linescore"] = linescore
+                linescore.append({"team": ls_m.group(1), "innings": ls_m.group(2).split(),
+                                  "r": ls_m.group(3), "h": ls_m.group(4), "e": ls_m.group(5)})
+    result["linescore"] = linescore
 
-    # ── Box scores (batting + pitching) ──────────────────────────────────────
-    # Walk tables in document order. A one-cell table whose text is a known
-    # NPB short name sets the "current team" label; the batting/pitching
-    # tables that follow belong to that team until the next label appears.
-    batting_boxes  = []
-    pitching_boxes = []
-    current_label  = None
-    seen_tbl_ids   = set()
+    # ── Box scores ───────────────────────────────────────────────────────────
+    batting_boxes, pitching_boxes = [], []
+    current_label, seen_tbl = None, set()
 
     for tbl in soup.find_all("table"):
-        if id(tbl) in seen_tbl_ids:
+        if id(tbl) in seen_tbl:
             continue
         rows = _direct_rows(tbl)
         if not rows:
             continue
 
-        # Team-label table: one row, exactly one non-empty cell, known name
         if len(rows) == 1:
             cells = [c for c in _direct_cells(rows[0]) if c]
             if len(cells) == 1 and cells[0] in NPB_SHORT_NAMES:
                 current_label = cells[0]
                 continue
 
-        header = _direct_cells(rows[0])
-        header_set = {h for h in header if h}
+        header_set = {h for h in _direct_cells(rows[0]) if h}
 
-        # ---- Batting table ----
         if BAT_HEADER_KEYS <= header_set:
-            seen_tbl_ids.add(id(tbl))
+            seen_tbl.add(id(tbl))
             players = []
             for row in rows[1:]:
                 cells = _direct_cells(row)
@@ -397,9 +419,8 @@ def parse_npb_game(game_url: str) -> dict:
                 batting_boxes.append({"team": current_label or "", "players": players})
             continue
 
-        # ---- Pitching table ----
         if PIT_HEADER_KEYS <= header_set:
-            seen_tbl_ids.add(id(tbl))
+            seen_tbl.add(id(tbl))
             players = []
             for row in rows[1:]:
                 cells = _direct_cells(row)
@@ -410,18 +431,14 @@ def parse_npb_game(game_url: str) -> dict:
                     continue
                 if name_cell.upper() in STAT_HEADER_WORDS or name_cell.lower().startswith("total"):
                     continue
-                ip_whole, ip_frac = cells[1], cells[2]
-                ip = (ip_whole + (" " + ip_frac if ip_frac else "")).strip()
-                tail = cells[3:9]   # BF H BB HB SO ER
+                ip = (cells[1] + (" " + cells[2] if cells[2] else "")).strip()
+                tail = cells[3:9]  # BF H BB HB SO ER
                 if not all(re.match(r"^\d+$", s) for s in tail):
                     continue
                 name, pos = _split_player(name_cell)
-                players.append({
-                    "name": name, "pos": pos,
-                    "stats": {"ip": ip or "–", "bf": tail[0], "h": tail[1],
-                              "bb": tail[2], "hb": tail[3], "so": tail[4],
-                              "er": tail[5]},
-                })
+                players.append({"name": name, "pos": pos,
+                                "stats": {"ip": ip or "–", "bf": tail[0], "h": tail[1],
+                                          "bb": tail[2], "hb": tail[3], "so": tail[4], "er": tail[5]}})
             if players:
                 pitching_boxes.append({"team": current_label or "", "players": players})
             continue
@@ -430,40 +447,26 @@ def parse_npb_game(game_url: str) -> dict:
     result["pitching"] = pitching_boxes[:2]
 
     # ── Game notes (WP / LP / S / HR) ────────────────────────────────────────
-    notes = []
-    last_key = None
+    notes, last_key = [], None
     for tr in soup.find_all("tr"):
         cells = _direct_cells(tr)
         if len(cells) < 2:
             continue
-        key = cells[0].replace(":", "").strip()
-        val = cells[1].strip()
+        key, val = cells[0].replace(":", "").strip(), cells[1].strip()
         if key in {"WP", "LP", "S", "HR"} and val:
-            notes.append((key, val))
-            last_key = key
+            notes.append((key, val)); last_key = key
         elif not key and last_key == "HR" and re.match(r"^\[[A-Z]+\]", val):
-            # HR continuation rows: empty first cell, "[F] Martinez ( ... )"
             notes.append(("HR", val))
     result["notes"] = notes
 
     return result
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Also handle SCHEDULED day pages (no game links yet) —
-# fall back to parsing the day-index page for team names + times
-# ══════════════════════════════════════════════════════════════════════════════
-
 @st.cache_data(ttl=300)
 def get_npb_schedule_from_day(date_str: str) -> list[dict]:
-    """
-    Parse the day-index page for scheduled (unplayed) games.
-    Returns list of partial game dicts with away/home/time/venue but no scores.
-    """
     year    = date_str[:4]
     compact = date_str.replace("-", "")
     day_url = f"https://npb.jp/bis/eng/{year}/games/gm{compact}.html"
-
     try:
         r = get(day_url)
         if r.status_code != 200:
@@ -471,74 +474,46 @@ def get_npb_schedule_from_day(date_str: str) -> list[dict]:
     except Exception:
         return []
 
-    soup  = BeautifulSoup(r.text, "lxml")
-    games = []
-
+    soup, games = BeautifulSoup(r.text, "lxml"), []
     large_logos = []
     for img in soup.find_all("img"):
         src = img.get("src", "")
         if "_l.gif" in src and "flag_" not in src and "samurai" not in src.lower() and "japan" not in src.lower():
             parent = img.parent
-            text   = parent.get_text(strip=True) if parent else ""
+            text = parent.get_text(strip=True) if parent else ""
             if not text or len(text) > 40:
                 text = img.get("alt", "").replace("#", "").strip()
             large_logos.append({"text": text, "src": src})
 
     for i in range(0, len(large_logos) - 1, 2):
-        away_text = large_logos[i]["text"]
-        home_text = large_logos[i + 1]["text"]
         games.append({
-            "away": away_text or f"Team {i+1}",
-            "home": home_text or f"Team {i+2}",
-            "away_score": None,
-            "home_score": None,
-            "venue": "",
-            "time": "",
-            "status": "SCHEDULED",
-            "linescore": [],
-            "batting": [], "pitching": [], "notes": [],
-            "game_url": day_url,
-            "error": "",
+            "away": large_logos[i]["text"] or f"Team {i+1}",
+            "home": large_logos[i + 1]["text"] or f"Team {i+2}",
+            "away_score": None, "home_score": None, "venue": "", "time": "",
+            "status": "SCHEDULED", "linescore": [], "batting": [], "pitching": [],
+            "notes": [], "game_url": day_url, "error": "",
         })
-
     return games
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# KBO SCRAPER  —  eng.koreabaseball.com (official KBO English site)
+# KBO SCRAPER — eng.koreabaseball.com (official English site)
 #
-# URL: https://eng.koreabaseball.com/Schedule/Scoreboard.aspx
-# Date param: ?searchDate=YYYY-MM-DD  (confirmed working for past dates)
-#
-# Confirmed structure for a COMPLETED game:
-#   Header text (between logo imgs): "LG 4 FINAL 1 HANWHA"
-#   Venue line: "JAMSIL 18:30 W: KIM Do Gyu L: KIM Jin Sung"
-#               (S: appears between W: and L: when there's a save;
-#                in flattened text the labels can run into the previous
-#                name with no space, e.g. "KIM Seo HyeonL: BARNES Charlie")
-#   Table row:  TEAMCODE | 1 | 0 | 1 | ... | - | R | H | E | B
-#
-# NOTE: the English scoreboard exposes NO per-player batting/pitching lines.
-# The only player-level data is the W / S / L pitcher decisions, which we
-# parse and link. Full KBO box scores exist only on the Korean-language
-# site (www.koreabaseball.com) behind constructed game IDs — fragile, and
-# names are in Hangul, so it is intentionally not scraped here.
+# The English scoreboard exposes linescores + W/S/L pitcher decisions, but NO
+# per-player batting lines. mykbostats.com DOES have full box scores, but:
+#   (1) it returns HTTP 403 to datacenter IPs (so it would fail on Streamlit
+#       Cloud — matches the project's "data source graveyard"), and
+#   (2) the box score is rendered client-side (Phoenix LiveView), so it isn't
+#       in the server HTML that requests+BeautifulSoup can see anyway.
+# So for KBO we link the decision pitchers (full romanized names) to BR.
 # ══════════════════════════════════════════════════════════════════════════════
 
 KBO_TEAM_NAMES = {
-    "KT":      "KT Wiz",
-    "DOOSAN":  "Doosan Bears",
-    "LG":      "LG Twins",
-    "LOTTE":   "Lotte Giants",
-    "SAMSUNG": "Samsung Lions",
-    "SSG":     "SSG Landers",
-    "HANWHA":  "Hanwha Eagles",
-    "NC":      "NC Dinos",
-    "KIA":     "Kia Tigers",
-    "KIWOOM":  "Kiwoom Heroes",
+    "KT": "KT Wiz", "DOOSAN": "Doosan Bears", "LG": "LG Twins",
+    "LOTTE": "Lotte Giants", "SAMSUNG": "Samsung Lions", "SSG": "SSG Landers",
+    "HANWHA": "Hanwha Eagles", "NC": "NC Dinos", "KIA": "Kia Tigers",
+    "KIWOOM": "Kiwoom Heroes",
 }
-
-# Venue codes that appear in the decisions line — used to pull the ballpark
 KBO_VENUES = {
     "JAMSIL": "Jamsil", "GOCHEOKSKY": "Gocheok Sky Dome", "GOCHEOK": "Gocheok Sky Dome",
     "MUNHAK": "Incheon (Munhak)", "SUWON": "Suwon", "DAEJEON": "Daejeon",
@@ -551,35 +526,19 @@ def expand_kbo(code: str) -> str:
     return KBO_TEAM_NAMES.get(code.upper().strip(), code.strip().title())
 
 def tidy_kbo_name(name: str) -> str:
-    """'KIM Seo Hyeon' -> 'Kim Seo Hyeon' (KBO eng site shouts surnames)."""
     return " ".join(w.capitalize() for w in name.split())
 
 def parse_kbo_decisions(segment: str) -> tuple[str, list[tuple[str, str]]]:
-    """
-    Parse the venue/decisions text that follows a game header, e.g.
-      'HANBAT 14:00 W: KIM Seo HyeonL: BARNES Charlie'
-    Returns (venue, [('W','KIM Seo Hyeon'), ('L','BARNES Charlie'), ...]).
-    """
     venue = ""
     vm = re.match(r"\s*([A-Z][A-Z]{2,11})\s+\d{1,2}:\d{2}", segment)
     if vm and vm.group(1) not in KBO_TEAM_NAMES:
         venue = KBO_VENUES.get(vm.group(1), vm.group(1).title())
 
-    decisions = []
-    # Split on W: / S: / L: labels. The colon cannot follow a digit here, and
-    # team/venue codes never contain ':', so this is safe even when a label
-    # runs into the previous name ('...HyeonL:').
-    parts = re.split(r"([WSL]):", segment)
-    # parts = [pre, 'W', ' KIM Seo Hyeon', 'L', ' BARNES Charlie', ...]
+    decisions, parts = [], re.split(r"([WSL]):", segment)
     for i in range(1, len(parts) - 1, 2):
-        label = parts[i]
-        raw   = parts[i + 1]
-        # name = leading run of letters/dots/apostrophes/hyphens/spaces,
-        # with a possible single trailing capital that belongs to the NEXT
-        # label already stripped by the split
+        label, raw = parts[i], parts[i + 1]
         nm = re.match(r"\s*([A-Za-z][A-Za-z\.\'\- ]*?)\s*$|\s*([A-Za-z][A-Za-z\.\'\- ]*?)(?=\s{2,}|\Z)", raw)
         name = (nm.group(1) or nm.group(2)) if nm else raw.strip()
-        # Cut anything that is clearly not part of a name (digits onward)
         name = re.split(r"\d", name)[0].strip()
         if name:
             decisions.append((label, name))
@@ -596,64 +555,40 @@ def fetch_kbo(date_str: str) -> tuple[list, str, str]:
     except Exception as e:
         return [], f"Network error: {e}", url
 
-    soup  = BeautifulSoup(r.text, "lxml")
-    games = []
-
-    final_pat = re.compile(
-        r'\b([A-Z]{2,7})\s+(\d{1,2})\s+FINAL\s+(\d{1,2})\s+([A-Z]{2,7})\b'
-    )
-    sched_pat = re.compile(
-        r'\b([A-Z]{2,7})\s+(\d{1,2}:\d{2})\s+([A-Z]{2,7})\b'
-    )
+    soup, games = BeautifulSoup(r.text, "lxml"), []
+    final_pat = re.compile(r'\b([A-Z]{2,7})\s+(\d{1,2})\s+FINAL\s+(\d{1,2})\s+([A-Z]{2,7})\b')
+    sched_pat = re.compile(r'\b([A-Z]{2,7})\s+(\d{1,2}:\d{2})\s+([A-Z]{2,7})\b')
 
     page_text = soup.get_text(" ")
-
-    game_headers = []
-    seen_spans = set()
+    game_headers, seen_spans = [], set()
 
     for m in final_pat.finditer(page_text):
-        if m.start() not in seen_spans:
-            seen_spans.add(m.start())
-            away_code, away_scr, home_scr, home_code = m.group(1), m.group(2), m.group(3), m.group(4)
-            if away_code in KBO_TEAM_NAMES and home_code in KBO_TEAM_NAMES:
-                game_headers.append({
-                    "away": expand_kbo(away_code),
-                    "home": expand_kbo(home_code),
-                    "away_score": away_scr,
-                    "home_score": home_scr,
-                    "status": "FINAL",
-                    "time": "",
-                    "pos": m.start(),
-                    "end": m.end(),
-                })
+        if m.start() in seen_spans:
+            continue
+        seen_spans.add(m.start())
+        a, asc, hsc, h = m.group(1), m.group(2), m.group(3), m.group(4)
+        if a in KBO_TEAM_NAMES and h in KBO_TEAM_NAMES:
+            game_headers.append({"away": expand_kbo(a), "home": expand_kbo(h),
+                                 "away_score": asc, "home_score": hsc, "status": "FINAL",
+                                 "time": "", "pos": m.start(), "end": m.end()})
 
     for m in sched_pat.finditer(page_text):
-        if m.start() not in seen_spans:
-            seen_spans.add(m.start())
-            away_code, time_val, home_code = m.group(1), m.group(2), m.group(3)
-            if away_code in KBO_TEAM_NAMES and home_code in KBO_TEAM_NAMES:
-                game_headers.append({
-                    "away": expand_kbo(away_code),
-                    "home": expand_kbo(home_code),
-                    "away_score": None,
-                    "home_score": None,
-                    "status": "SCHEDULED",
-                    "time": time_val,
-                    "pos": m.start(),
-                    "end": m.end(),
-                })
+        if m.start() in seen_spans:
+            continue
+        seen_spans.add(m.start())
+        a, tv, h = m.group(1), m.group(2), m.group(3)
+        if a in KBO_TEAM_NAMES and h in KBO_TEAM_NAMES:
+            game_headers.append({"away": expand_kbo(a), "home": expand_kbo(h),
+                                 "away_score": None, "home_score": None, "status": "SCHEDULED",
+                                 "time": tv, "pos": m.start(), "end": m.end()})
 
     game_headers.sort(key=lambda x: x["pos"])
 
-    # ── Venue + W/S/L pitcher decisions: parse the text BETWEEN headers ──────
     for i, hdr in enumerate(game_headers):
         seg_end = game_headers[i + 1]["pos"] if i + 1 < len(game_headers) else len(page_text)
         segment = page_text[hdr["end"]:min(seg_end, hdr["end"] + 400)]
-        venue, decisions = parse_kbo_decisions(segment)
-        hdr["venue"] = venue
-        hdr["decisions"] = decisions
+        hdr["venue"], hdr["decisions"] = parse_kbo_decisions(segment)
 
-    # ── Parse linescore tables ────────────────────────────────────────────────
     score_tables = []
     for tbl in soup.find_all("table"):
         rows = tbl.find_all("tr", recursive=False)
@@ -662,67 +597,47 @@ def fetch_kbo(date_str: str) -> tuple[list, str, str]:
             rows = tbody.find_all("tr", recursive=False) if tbody else []
         if len(rows) < 2:
             continue
-
         codes = []
         for row in rows[:2]:
             first = row.find(["th", "td"], recursive=False)
             if first:
                 codes.append(first.get_text(strip=True).upper())
-
         if len(codes) == 2 and all(c in KBO_TEAM_NAMES for c in codes):
             score_tables.append((codes, tbl))
 
-    # ── Match headers to tables and build game dicts ──────────────────────────
     for i, hdr in enumerate(game_headers):
         ls = []
-
         if i < len(score_tables):
-            codes, tbl = score_tables[i]
+            _, tbl = score_tables[i]
             rows = tbl.find_all("tr", recursive=False)
             if not rows:
                 tbody = tbl.find("tbody")
                 rows = tbody.find_all("tr", recursive=False) if tbody else []
-
             for row in rows[:2]:
                 cells = [c.get_text(strip=True) for c in row.find_all(["th", "td"], recursive=False)]
                 if not cells:
                     continue
-                team_code = cells[0]
-                inn_cells = cells[1:]
+                team_code, inn_cells = cells[0], cells[1:]
                 innings, totals, r_val = [], [], None
                 if len(inn_cells) >= 4:
-                    totals = inn_cells[-4:]   # R, H, E, B
-                    inning_cells = inn_cells[:-4]
-                    innings = [c for c in inning_cells if c]
+                    totals = inn_cells[-4:]
+                    innings = [c for c in inn_cells[:-4] if c]
                     r_val = totals[0] if totals[0] and re.match(r'^\d+$', totals[0]) else None
-                ls.append({
-                    "team":    expand_kbo(team_code),
-                    "innings": innings,
-                    "r": r_val or "–",
-                    "h": totals[1] if len(totals) > 1 and totals[1] else "–",
-                    "e": totals[2] if len(totals) > 2 and totals[2] else "–",
-                })
+                ls.append({"team": expand_kbo(team_code), "innings": innings, "r": r_val or "–",
+                           "h": totals[1] if len(totals) > 1 and totals[1] else "–",
+                           "e": totals[2] if len(totals) > 2 and totals[2] else "–"})
 
-        games.append({
-            "away":       hdr["away"],
-            "home":       hdr["home"],
-            "away_score": hdr["away_score"],
-            "home_score": hdr["home_score"],
-            "venue":      hdr.get("venue", ""),
-            "time":       hdr["time"],
-            "status":     hdr["status"],
-            "linescore":  ls,
-            "decisions":  hdr.get("decisions", []),
-            "batting": [], "pitching": [], "notes": [],
-        })
+        games.append({"away": hdr["away"], "home": hdr["home"],
+                      "away_score": hdr["away_score"], "home_score": hdr["home_score"],
+                      "venue": hdr.get("venue", ""), "time": hdr["time"], "status": hdr["status"],
+                      "linescore": ls, "decisions": hdr.get("decisions", []),
+                      "batting": [], "pitching": [], "notes": []})
 
     if not games:
-        return [], (
-            f"No KBO games found for {fmt_date(date_str)}. "
-            f"May be an off day (KBO plays Tue–Sun, no Mondays)."
-        ), url
-
+        return [], (f"No KBO games found for {fmt_date(date_str)}. "
+                    f"May be an off day (KBO plays Tue–Sun, no Mondays)."), url
     return games, "", url
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RENDER
@@ -731,116 +646,105 @@ def fetch_kbo(date_str: str) -> tuple[list, str, str]:
 def render_linescore(ls: list):
     if not ls:
         return
-    max_inn = max(len(row["innings"]) for row in ls)
+    max_inn = max(len(r["innings"]) for r in ls)
     inn_headers = "".join(f"<th>{i+1}</th>" for i in range(max_inn))
     hdr = f"<tr><th></th>{inn_headers}<th class='tot'>R</th><th class='tot'>H</th><th class='tot'>E</th></tr>"
-    rows_html = ""
-    for row in ls:
-        cells = "".join(f"<td>{row['innings'][i] if i < len(row['innings']) else '–'}</td>"
-                        for i in range(max_inn))
-        rows_html += (f"<tr><td class='team-col'>{row['team']}</td>{cells}"
-                      f"<td class='tot'>{row['r']}</td>"
-                      f"<td class='tot'>{row['h']}</td>"
-                      f"<td class='tot'>{row['e']}</td></tr>")
-    st.markdown(
-        f"<div class='linescore-wrap'><table class='linescore'>"
-        f"<thead>{hdr}</thead><tbody>{rows_html}</tbody></table></div>",
-        unsafe_allow_html=True
-    )
+    rows = ""
+    for r in ls:
+        cells = "".join(f"<td>{r['innings'][i] if i < len(r['innings']) else '–'}</td>" for i in range(max_inn))
+        rows += (f"<tr><td class='team-col'>{r['team']}</td>{cells}"
+                 f"<td class='tot'>{r['r']}</td><td class='tot'>{r['h']}</td><td class='tot'>{r['e']}</td></tr>")
+    st.markdown(f"<div class='linescore-wrap'><table class='linescore'>"
+                f"<thead>{hdr}</thead><tbody>{rows}</tbody></table></div>", unsafe_allow_html=True)
 
 
-def render_batting_box(box: dict, fallback_title: str):
+def _npb_player_anchor(register, team_short, box_name):
+    """BR anchor for an NPB box-score name, expanded via register when possible."""
+    search_name, confident = npb_full_name(register, team_short, box_name)
+    if confident:
+        # display full name; link to full-name BR search
+        return br_link(search_name, search_name)
+    # fall back: show what the box printed, search the surname
+    return br_link(search_name, box_name)
+
+
+def render_batting_box(box, fallback_title, register):
     title = box.get("team") or fallback_title
+    team_short = box.get("team") or ""
     head = ("<tr><th class='pname'>BATTING</th><th class='pname'></th>"
             "<th>AB</th><th>H</th><th>RBI</th><th>BB</th><th>HP</th><th>SO</th></tr>")
     rows = ""
     for p in box["players"]:
-        link  = br_player_link(p["name"])
+        link = _npb_player_anchor(register, team_short, p["name"])
         cells = "".join(f"<td>{s}</td>" for s in p["stats"])
-        rows += (f"<tr><td class='pname'>{link}</td>"
-                 f"<td class='ppos'>{p['pos']}</td>{cells}</tr>")
-    st.markdown(
-        f"<div class='box-title'>{title} — Batting</div>"
-        f"<div class='boxscore-wrap'><table class='boxscore'>"
-        f"<thead>{head}</thead><tbody>{rows}</tbody></table></div>",
-        unsafe_allow_html=True
-    )
+        rows += f"<tr><td class='pname'>{link}</td><td class='ppos'>{p['pos']}</td>{cells}</tr>"
+    st.markdown(f"<div class='box-title'>{title} — Batting</div>"
+                f"<div class='boxscore-wrap'><table class='boxscore'>"
+                f"<thead>{head}</thead><tbody>{rows}</tbody></table></div>", unsafe_allow_html=True)
 
 
-def render_pitching_box(box: dict, fallback_title: str):
+def render_pitching_box(box, fallback_title, register):
     title = box.get("team") or fallback_title
+    team_short = box.get("team") or ""
     head = ("<tr><th class='pname'>PITCHING</th><th class='pname'></th>"
             "<th>IP</th><th>BF</th><th>H</th><th>BB</th><th>HB</th><th>SO</th><th>ER</th></tr>")
     rows = ""
     for p in box["players"]:
-        link = br_player_link(p["name"])
-        s    = p["stats"]
-        rows += (f"<tr><td class='pname'>{link}</td>"
-                 f"<td class='ppos'>{p['pos']}</td>"
-                 f"<td>{s['ip']}</td><td>{s['bf']}</td><td>{s['h']}</td>"
-                 f"<td>{s['bb']}</td><td>{s['hb']}</td><td>{s['so']}</td>"
-                 f"<td>{s['er']}</td></tr>")
-    st.markdown(
-        f"<div class='box-title'>{title} — Pitching</div>"
-        f"<div class='boxscore-wrap'><table class='boxscore'>"
-        f"<thead>{head}</thead><tbody>{rows}</tbody></table></div>",
-        unsafe_allow_html=True
-    )
+        link = _npb_player_anchor(register, team_short, p["name"])
+        s = p["stats"]
+        rows += (f"<tr><td class='pname'>{link}</td><td class='ppos'>{p['pos']}</td>"
+                 f"<td>{s['ip']}</td><td>{s['bf']}</td><td>{s['h']}</td><td>{s['bb']}</td>"
+                 f"<td>{s['hb']}</td><td>{s['so']}</td><td>{s['er']}</td></tr>")
+    st.markdown(f"<div class='box-title'>{title} — Pitching</div>"
+                f"<div class='boxscore-wrap'><table class='boxscore'>"
+                f"<thead>{head}</thead><tbody>{rows}</tbody></table></div>", unsafe_allow_html=True)
 
 
-def render_game_notes(notes: list):
-    """WP / LP / S / HR lines from NPB — player name inside is linked."""
+def render_game_notes(notes, register, away_short, home_short):
     if not notes:
         return
     label_map = {"WP": "WIN", "LP": "LOSS", "S": "SAVE", "HR": "HR"}
     html = ""
     for key, val in notes:
-        # Pull the player name: leading text up to '(' or the '[F] ' prefix
+        # HR lines are prefixed like "[F] Reyes ( ... )"; the [X] tag isn't a
+        # reliable team key, so for notes we expand by trying BOTH teams.
         m = re.match(r"^(?:\[[A-Z]+\]\s*)?([A-Za-z\.\'\-]+(?:\s[A-Za-z\.\'\-]+)?)", val)
         if m:
-            name   = m.group(1)
-            linked = val.replace(name, br_player_link(name), 1)
+            box_name = m.group(1)
+            search_name, confident = npb_full_name(register, away_short, box_name)
+            if not confident:
+                search_name, confident = npb_full_name(register, home_short, box_name)
+            display = search_name if confident else box_name
+            linked = val.replace(box_name, br_link(search_name, display), 1)
         else:
             linked = val
-        html += (f"<div class='notes-line'><span class='notes-key'>"
-                 f"{label_map.get(key, key)}</span> &nbsp;{linked}</div>")
+        html += f"<div class='notes-line'><span class='notes-key'>{label_map.get(key, key)}</span> &nbsp;{linked}</div>"
     st.markdown(html, unsafe_allow_html=True)
 
 
-def render_kbo_decisions(decisions: list):
-    """W / S / L pitcher decisions from the KBO scoreboard, names linked."""
+def render_kbo_decisions(decisions):
     if not decisions:
         return
     label_map = {"W": "WIN", "S": "SAVE", "L": "LOSS"}
     html = ""
-    for key, raw_name in decisions:
-        display = tidy_kbo_name(raw_name)
-        html += (f"<div class='notes-line'><span class='notes-key'>"
-                 f"{label_map.get(key, key)}</span> &nbsp;"
-                 f"{br_player_link(raw_name, display)}</div>")
+    for key, raw in decisions:
+        display = tidy_kbo_name(raw)
+        html += (f"<div class='notes-line'><span class='notes-key'>{label_map.get(key, key)}</span> &nbsp;"
+                 f"{br_link(display, display)}</div>")
     st.markdown(html, unsafe_allow_html=True)
 
 
-def render_card(g: dict, league: str, date_str: str):
-    away   = g.get("away", "?")
-    home   = g.get("home", "?")
-    as_    = g.get("away_score")
-    hs     = g.get("home_score")
-    venue  = g.get("venue", "")
-    time_  = g.get("time", "")
-    status = g.get("status", "")
-    ls     = g.get("linescore", [])
-    gurl   = g.get("game_url", "")
-    final  = as_ is not None and hs is not None
-
-    batting   = g.get("batting", [])
-    pitching  = g.get("pitching", [])
-    notes     = g.get("notes", [])
-    decisions = g.get("decisions", [])
+def render_card(g, league, date_str, register=None):
+    away, home = g.get("away", "?"), g.get("home", "?")
+    as_, hs = g.get("away_score"), g.get("home_score")
+    venue, time_, status = g.get("venue", ""), g.get("time", ""), g.get("status", "")
+    ls, gurl = g.get("linescore", []), g.get("game_url", "")
+    final = as_ is not None and hs is not None
+    batting, pitching = g.get("batting", []), g.get("pitching", [])
+    notes, decisions = g.get("notes", []), g.get("decisions", [])
 
     ac, hc = winner_cls(as_, hs) if final else ("neutral", "neutral")
-    as_d   = str(as_) if final else "–"
-    hs_d   = str(hs)  if final else "–"
+    as_d, hs_d = (str(as_) if final else "–"), (str(hs) if final else "–")
 
     if status == "FINAL":
         label = "FINAL"
@@ -851,24 +755,17 @@ def render_card(g: dict, league: str, date_str: str):
     else:
         label = status or "SCHEDULED"
 
-    year    = date_str[:4]
-    compact = date_str.replace("-", "")
-
+    year, compact = date_str[:4], date_str.replace("-", "")
     if league == "NPB":
-        primary_url = gurl or f"https://npb.jp/bis/eng/{year}/games/gm{compact}.html"
-        links = (
-            f'<a class="ext-link" href="{primary_url}" target="_blank">NPB.jp</a>'
-            f'<a class="ext-link" href="https://npb.jp/bis/eng/{year}/games/gm{compact}.html" target="_blank">All Games</a>'
-        )
+        primary = gurl or f"https://npb.jp/bis/eng/{year}/games/gm{compact}.html"
+        links = (f'<a class="ext-link" href="{primary}" target="_blank">NPB.jp</a>'
+                 f'<a class="ext-link" href="https://npb.jp/bis/eng/{year}/games/gm{compact}.html" target="_blank">All Games</a>')
     else:
         kbo_url = f"https://eng.koreabaseball.com/Schedule/Scoreboard.aspx?searchDate={date_str}"
-        links = (
-            f'<a class="ext-link" href="{kbo_url}" target="_blank">KBO Official</a>'
-            f'<a class="ext-link" href="https://mykbostats.com/games" target="_blank">MyKBOStats</a>'
-        )
+        links = (f'<a class="ext-link" href="{kbo_url}" target="_blank">KBO Official</a>'
+                 f'<a class="ext-link" href="https://mykbostats.com/games" target="_blank">MyKBOStats</a>')
 
     venue_html = f"<div class='card-venue'>{venue}</div>" if venue else ""
-
     st.markdown(f"""
     <div class="card">
       {venue_html}
@@ -878,9 +775,7 @@ def render_card(g: dict, league: str, date_str: str):
           <div style="font-family:'IBM Plex Mono',monospace;font-size:.58rem;color:#2a2a2a;margin-top:2px">AWAY</div>
         </div>
         <div class="score-mid">
-          <span class="score {ac}">{as_d}</span>
-          <span class="score-sep">·</span>
-          <span class="score {hc}">{hs_d}</span>
+          <span class="score {ac}">{as_d}</span><span class="score-sep">·</span><span class="score {hc}">{hs_d}</span>
         </div>
         <div class="team-block" style="text-align:right">
           <div class="team-name {hc}" style="text-align:right">{home}</div>
@@ -899,29 +794,26 @@ def render_card(g: dict, league: str, date_str: str):
             if ls:
                 render_linescore(ls)
             if notes:
-                render_game_notes(notes)
+                # Box labels are short names; derive away/home short labels.
+                away_short = batting[0]["team"] if len(batting) >= 1 and batting[0].get("team") else ""
+                home_short = batting[1]["team"] if len(batting) >= 2 and batting[1].get("team") else ""
+                render_game_notes(notes, register or {}, away_short, home_short)
             if decisions:
                 render_kbo_decisions(decisions)
-                st.markdown(
-                    "<div class='notes-line' style='color:#333'>"
-                    "Per-player batting lines aren't published on KBO's English site — "
-                    "player names above link to Baseball Reference.</div>",
-                    unsafe_allow_html=True
-                )
-            # Away box first, then home (matches document order on NPB.jp)
+                st.markdown("<div class='notes-line' style='color:#333'>"
+                            "Per-player batting lines aren't published on KBO's English site — "
+                            "pitcher decisions above link to Baseball Reference.</div>", unsafe_allow_html=True)
             fallbacks = [away, home]
             if batting:
-                c1, c2 = st.columns(2) if len(batting) == 2 else (st.container(), None)
+                cols = st.columns(2) if len(batting) == 2 else (st.container(),)
                 for idx, box in enumerate(batting):
-                    target = (c1, c2)[idx] if len(batting) == 2 else c1
-                    with target:
-                        render_batting_box(box, fallbacks[idx] if idx < 2 else "")
+                    with cols[idx] if len(batting) == 2 else cols[0]:
+                        render_batting_box(box, fallbacks[idx] if idx < 2 else "", register or {})
             if pitching:
-                c1, c2 = st.columns(2) if len(pitching) == 2 else (st.container(), None)
+                cols = st.columns(2) if len(pitching) == 2 else (st.container(),)
                 for idx, box in enumerate(pitching):
-                    target = (c1, c2)[idx] if len(pitching) == 2 else c1
-                    with target:
-                        render_pitching_box(box, fallbacks[idx] if idx < 2 else "")
+                    with cols[idx] if len(pitching) == 2 else cols[0]:
+                        render_pitching_box(box, fallbacks[idx] if idx < 2 else "", register or {})
 
 
 def scores_page_npb(date_str: str):
@@ -933,26 +825,24 @@ def scores_page_npb(date_str: str):
         return
 
     if not game_links:
-        st.markdown(
-            "<div class='info-box'>Games not yet completed — showing schedule from NPB.jp</div>",
-            unsafe_allow_html=True
-        )
+        st.markdown("<div class='info-box'>Games not yet completed — showing schedule from NPB.jp</div>",
+                    unsafe_allow_html=True)
         sched = get_npb_schedule_from_day(date_str)
         if sched:
             for g in sched:
                 render_card(g, "NPB", date_str)
         else:
-            st.markdown(
-                f"<div class='no-games'>No NPB games found for {fmt_date(date_str)}</div>",
-                unsafe_allow_html=True
-            )
+            st.markdown(f"<div class='no-games'>No NPB games found for {fmt_date(date_str)}</div>",
+                        unsafe_allow_html=True)
         return
+
+    # Player-name register (cached 24h) — used to expand surnames to full names.
+    register = load_npb_register()
 
     progress = st.progress(0, text="Loading game results…")
     games = []
     for i, gurl in enumerate(game_links):
-        g = parse_npb_game(gurl)
-        games.append(g)
+        games.append(parse_npb_game(gurl))
         progress.progress((i + 1) / len(game_links), text=f"Loading game {i+1} of {len(game_links)}…")
     progress.empty()
 
@@ -960,7 +850,7 @@ def scores_page_npb(date_str: str):
         if g.get("error"):
             st.markdown(f"<div class='err-box'>⚠ Could not load game: {g['error']}</div>", unsafe_allow_html=True)
         else:
-            render_card(g, "NPB", date_str)
+            render_card(g, "NPB", date_str, register=register)
 
 
 def scores_page_kbo(date_str: str):
@@ -972,10 +862,8 @@ def scores_page_kbo(date_str: str):
         st.markdown(f"[View on KBO Official ↗]({src_url})")
 
     if not games and not err:
-        st.markdown(
-            f"<div class='no-games'>No KBO games found for {fmt_date(date_str)}</div>",
-            unsafe_allow_html=True
-        )
+        st.markdown(f"<div class='no-games'>No KBO games found for {fmt_date(date_str)}</div>",
+                    unsafe_allow_html=True)
         return
 
     for g in games:
@@ -995,20 +883,13 @@ jst_now = now_jst()
 
 c1, c2, c3 = st.columns([3, 1, 1])
 with c1:
-    selected_date = st.date_input(
-        "Date",
-        value=(jst_now - timedelta(days=1)).date(),
-        max_value=jst_now.date(),
-        min_value=date_type(2020, 1, 1),
-        label_visibility="collapsed",
-        format="YYYY-MM-DD",
-    )
+    selected_date = st.date_input("Date", value=(jst_now - timedelta(days=1)).date(),
+                                  max_value=jst_now.date(), min_value=date_type(2020, 1, 1),
+                                  label_visibility="collapsed", format="YYYY-MM-DD")
     selected_str = selected_date.strftime("%Y-%m-%d")
 with c2:
-    st.markdown(
-        f"<div style='font-family:IBM Plex Mono,monospace;font-size:.62rem;color:#333;padding-top:10px'>"
-        f"JST {jst_now.strftime('%H:%M')}</div>", unsafe_allow_html=True
-    )
+    st.markdown(f"<div style='font-family:IBM Plex Mono,monospace;font-size:.62rem;color:#333;padding-top:10px'>"
+                f"JST {jst_now.strftime('%H:%M')}</div>", unsafe_allow_html=True)
 with c3:
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
     if st.button("↻ Refresh", use_container_width=True):
@@ -1017,31 +898,24 @@ with c3:
 
 today_s     = jst_now.strftime("%Y-%m-%d")
 yesterday_s = (jst_now - timedelta(days=1)).strftime("%Y-%m-%d")
-dlabel = (
-    f"Today · {fmt_date(selected_str)}"     if selected_str == today_s     else
-    f"Yesterday · {fmt_date(selected_str)}" if selected_str == yesterday_s else
-    fmt_date(selected_str)
-)
+dlabel = (f"Today · {fmt_date(selected_str)}"     if selected_str == today_s     else
+          f"Yesterday · {fmt_date(selected_str)}" if selected_str == yesterday_s else
+          fmt_date(selected_str))
 st.markdown(f"<div class='section-label' style='margin-bottom:.8rem'>{dlabel}</div>", unsafe_allow_html=True)
 
 st.markdown("""
 <div class='info-box'>
-  NPB data from <strong>NPB.jp</strong> (official game pages, incl. box scores) ·
-  KBO data from <strong>eng.koreabaseball.com</strong> (official KBO English site) ·
-  Player links → Baseball Reference · Cache: 5 min
+  NPB from <strong>NPB.jp</strong> (official game pages + box scores) ·
+  KBO from <strong>eng.koreabaseball.com</strong> ·
+  Player names link to <strong>Baseball Reference</strong> (NPB full names via NPB.jp register) · Cache: 5 min
 </div>""", unsafe_allow_html=True)
 
 t_npb, t_kbo = st.tabs(["🇯🇵  NPB Scores", "🇰🇷  KBO Scores"])
-
 with t_npb:
     scores_page_npb(selected_str)
-
 with t_kbo:
     scores_page_kbo(selected_str)
 
 st.markdown("---")
-st.markdown(
-    f"<span style='font-family:IBM Plex Mono,monospace;font-size:.58rem;color:#222;letter-spacing:.1em'>"
-    f"NPB.jp · eng.koreabaseball.com · {datetime.now(JST).year} season</span>",
-    unsafe_allow_html=True
-)
+st.markdown(f"<span style='font-family:IBM Plex Mono,monospace;font-size:.58rem;color:#222;letter-spacing:.1em'>"
+            f"NPB.jp · eng.koreabaseball.com · {datetime.now(JST).year} season</span>", unsafe_allow_html=True)
