@@ -380,8 +380,15 @@ def parse_npb_game(game_url: str) -> dict:
     result["linescore"] = linescore
 
     # ── Box scores ───────────────────────────────────────────────────────────
+    # Collect batting and pitching boxes in DOCUMENT ORDER. We do NOT trust a
+    # team-label table to precede each box: on npb.jp the two teams' boxes sit
+    # side-by-side in one layout row, and both label tables can appear before
+    # any stat table — which previously caused every box to inherit the last
+    # label ("Yakult, Yakult, ..."). Instead, NPB always lists the AWAY team's
+    # boxes first and the HOME team's second, so we assign teams positionally
+    # from the score block (result["away"] / result["home"]).
     batting_boxes, pitching_boxes = [], []
-    current_label, seen_tbl = None, set()
+    seen_tbl = set()
 
     for tbl in soup.find_all("table"):
         if id(tbl) in seen_tbl:
@@ -390,10 +397,11 @@ def parse_npb_game(game_url: str) -> dict:
         if not rows:
             continue
 
+        # Skip standalone team-label tables (1 row, 1 short-name cell). We no
+        # longer use them for assignment, but skipping avoids mis-parsing them.
         if len(rows) == 1:
             cells = [c for c in _direct_cells(rows[0]) if c]
             if len(cells) == 1 and cells[0] in NPB_SHORT_NAMES:
-                current_label = cells[0]
                 continue
 
         header_set = {h for h in _direct_cells(rows[0]) if h}
@@ -416,7 +424,7 @@ def parse_npb_game(game_url: str) -> dict:
                 name, pos = _split_player(name_cell)
                 players.append({"name": name, "pos": pos, "stats": stats})
             if players:
-                batting_boxes.append({"team": current_label or "", "players": players})
+                batting_boxes.append({"team": "", "players": players})
             continue
 
         if PIT_HEADER_KEYS <= header_set:
@@ -440,11 +448,25 @@ def parse_npb_game(game_url: str) -> dict:
                                 "stats": {"ip": ip or "–", "bf": tail[0], "h": tail[1],
                                           "bb": tail[2], "hb": tail[3], "so": tail[4], "er": tail[5]}})
             if players:
-                pitching_boxes.append({"team": current_label or "", "players": players})
+                pitching_boxes.append({"team": "", "players": players})
             continue
 
-    result["batting"]  = batting_boxes[:2]
-    result["pitching"] = pitching_boxes[:2]
+    batting_boxes  = batting_boxes[:2]
+    pitching_boxes = pitching_boxes[:2]
+
+    # Assign teams by position: away first, home second. Map the full team name
+    # from the score block to its short box-score label (e.g. "Hokkaido
+    # Nippon-Ham Fighters" -> "Nippon-Ham"); fall back to the full name.
+    away_short = NPB_TEAM_TO_SHORT.get(result["away"], result["away"])
+    home_short = NPB_TEAM_TO_SHORT.get(result["home"], result["home"])
+    order = [away_short, home_short]
+    for i, box in enumerate(batting_boxes):
+        box["team"] = order[i] if i < 2 else ""
+    for i, box in enumerate(pitching_boxes):
+        box["team"] = order[i] if i < 2 else ""
+
+    result["batting"]  = batting_boxes
+    result["pitching"] = pitching_boxes
 
     # ── Game notes (WP / LP / S / HR) ────────────────────────────────────────
     notes, last_key = [], None
